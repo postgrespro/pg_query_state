@@ -1,8 +1,8 @@
 diff --git a/src/backend/commands/explain.c b/src/backend/commands/explain.c
-index 5d06fa4..e1f1dfe 100644
+index 11047f7..3f5c638 100644
 --- a/src/backend/commands/explain.c
 +++ b/src/backend/commands/explain.c
-@@ -652,15 +652,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -653,15 +653,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  		Instrumentation *instr = rInfo->ri_TrigInstrument + nt;
  		char	   *relname;
  		char	   *conname = NULL;
@@ -41,33 +41,30 @@ index 5d06fa4..e1f1dfe 100644
  			continue;
  
  		ExplainOpenGroup("Trigger", NULL, true, es);
-@@ -684,8 +704,11 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
- 				appendStringInfo(es->str, " for constraint %s", conname);
- 			if (show_relname)
+@@ -687,9 +707,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				appendStringInfo(es->str, " on %s", relname);
--			appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
--							 1000.0 * instr->total, instr->ntuples);
-+			if (es->timing)
-+				appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
+ 			if (es->timing)
+ 				appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
+-								 1000.0 * instr->total, instr->ntuples);
 +								 1000.0 * total, ncalls);
-+			else
+ 			else
+-				appendStringInfo(es->str, ": calls=%.0f\n", instr->ntuples);
 +				appendStringInfo(es->str, ": calls=%.0f\n", ncalls);
  		}
  		else
  		{
-@@ -693,8 +716,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
- 			if (conname)
+@@ -698,8 +718,8 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				ExplainPropertyText("Constraint Name", conname, es);
  			ExplainPropertyText("Relation", relname, es);
--			ExplainPropertyFloat("Time", 1000.0 * instr->total, 3, es);
+ 			if (es->timing)
+-				ExplainPropertyFloat("Time", 1000.0 * instr->total, 3, es);
 -			ExplainPropertyFloat("Calls", instr->ntuples, 0, es);
-+			if (es->timing)
 +				ExplainPropertyFloat("Time", 1000.0 * total, 3, es);
 +			ExplainPropertyFloat("Calls", ncalls, 0, es);
  		}
  
  		if (conname)
-@@ -1242,8 +1266,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1247,8 +1267,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
  	 * instrumentation results the user didn't ask for.  But we do the
  	 * InstrEndLoop call anyway, if possible, to reduce the number of cases
  	 * auto_explain has to contend with.
@@ -80,7 +77,7 @@ index 5d06fa4..e1f1dfe 100644
  		InstrEndLoop(planstate->instrument);
  
  	if (es->analyze &&
-@@ -1276,7 +1303,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1281,7 +1304,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
  			ExplainPropertyFloat("Actual Loops", nloops, 0, es);
  		}
  	}
@@ -89,7 +86,7 @@ index 5d06fa4..e1f1dfe 100644
  	{
  		if (es->format == EXPLAIN_FORMAT_TEXT)
  			appendStringInfoString(es->str, " (never executed)");
-@@ -1292,6 +1319,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1297,6 +1320,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
  		}
  	}
  
@@ -165,7 +162,7 @@ index 5d06fa4..e1f1dfe 100644
  	/* in text format, first line ends here */
  	if (es->format == EXPLAIN_FORMAT_TEXT)
  		appendStringInfoChar(es->str, '\n');
-@@ -2285,20 +2381,17 @@ show_instrumentation_count(const char *qlabel, int which,
+@@ -2293,20 +2385,17 @@ show_instrumentation_count(const char *qlabel, int which,
  	if (!es->analyze || !planstate->instrument)
  		return;
  
@@ -192,7 +189,7 @@ index 5d06fa4..e1f1dfe 100644
  }
  
  /*
-@@ -2650,14 +2743,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
+@@ -2658,14 +2747,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  			double		insert_path;
  			double		other_path;
  

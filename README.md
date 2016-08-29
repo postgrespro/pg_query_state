@@ -1,14 +1,16 @@
 # pg\_query\_state
 
-The `pg_query_state` module provides facility to know the current state of query execution on working backend.
+The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the latest stable version of PostgreSQL 9.5.
 
 ## Overview
-Each complex query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree with is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
+Each complex query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree wich is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
 
 In fact, this module is able to explore external backend and determine its actual state. Particularly it's helpful when backend executes a heavy query or gets stuck.
 
 ## Installation
-To install `pg_query_state`, execute this in the module's directory:
+To install `pg_query_state`, please apply patches `custom_signal.patch`, `executor_hooks.patch` and `runtime_explain.patch` to the latest stable version of PostgreSQL 9.5 and rebuild PostgreSQL.
+
+Then execute this in the module's directory:
 ```
 make install USE_PGXS=1
 ```
@@ -259,7 +261,7 @@ plan       | Aggregate (Current loop: actual rows=0, loop number=1)             
            |         ->  Hash (Current loop: actual rows=0, loop number=1)                 +
            |               ->  Seq Scan on bar (Current loop: actual rows=0, loop number=1)
 ```
-Node `Seq Scan on foo` have emitted first row to `Hash Join`. Completion of traceable query is performed as follows:
+Node `Seq Scan on foo` has emitted first row to `Hash Join`. Completion of traceable query is performed as follows:
 ```
 postgres=# select executor_continue(pid := 20102);
 -[ RECORD 1 ]-----+-
