@@ -1,0 +1,286 @@
+diff --git a/src/backend/commands/explain.c b/src/backend/commands/explain.c
+index 5d06fa4..e1f1dfe 100644
+--- a/src/backend/commands/explain.c
++++ b/src/backend/commands/explain.c
+@@ -652,15 +652,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+ 		Instrumentation *instr = rInfo->ri_TrigInstrument + nt;
+ 		char	   *relname;
+ 		char	   *conname = NULL;
++		instr_time	starttimespan;
++		double		total;
++		double		ntuples;
++		double		ncalls;
+ 
+-		/* Must clean up instrumentation state */
+-		InstrEndLoop(instr);
++		if (!es->runtime)
++		{
++			/* Must clean up instrumentation state */
++			InstrEndLoop(instr);
++		}
++
++		/* Collect statistic variables */
++		if (!INSTR_TIME_IS_ZERO(instr->starttime))
++		{
++			INSTR_TIME_SET_CURRENT(starttimespan);
++			INSTR_TIME_SUBTRACT(starttimespan, instr->starttime);
++		}
++		else
++			INSTR_TIME_SET_ZERO(starttimespan);
++		total = instr->total + INSTR_TIME_GET_DOUBLE(instr->counter)
++							 + INSTR_TIME_GET_DOUBLE(starttimespan);
++		ntuples = instr->ntuples + instr->tuplecount;
++		ncalls = ntuples + !INSTR_TIME_IS_ZERO(starttimespan);
+ 
+ 		/*
+ 		 * We ignore triggers that were never invoked; they likely aren't
+ 		 * relevant to the current query type.
+ 		 */
+-		if (instr->ntuples == 0)
++		if (ncalls == 0)
+ 			continue;
+ 
+ 		ExplainOpenGroup("Trigger", NULL, true, es);
+@@ -684,8 +704,11 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+ 				appendStringInfo(es->str, " for constraint %s", conname);
+ 			if (show_relname)
+ 				appendStringInfo(es->str, " on %s", relname);
+-			appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
+-							 1000.0 * instr->total, instr->ntuples);
++			if (es->timing)
++				appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
++								 1000.0 * total, ncalls);
++			else
++				appendStringInfo(es->str, ": calls=%.0f\n", ncalls);
+ 		}
+ 		else
+ 		{
+@@ -693,8 +716,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+ 			if (conname)
+ 				ExplainPropertyText("Constraint Name", conname, es);
+ 			ExplainPropertyText("Relation", relname, es);
+-			ExplainPropertyFloat("Time", 1000.0 * instr->total, 3, es);
+-			ExplainPropertyFloat("Calls", instr->ntuples, 0, es);
++			if (es->timing)
++				ExplainPropertyFloat("Time", 1000.0 * total, 3, es);
++			ExplainPropertyFloat("Calls", ncalls, 0, es);
+ 		}
+ 
+ 		if (conname)
+@@ -1242,8 +1266,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
+ 	 * instrumentation results the user didn't ask for.  But we do the
+ 	 * InstrEndLoop call anyway, if possible, to reduce the number of cases
+ 	 * auto_explain has to contend with.
++	 *
++	 * if flag es->stateinfo is set i.e. when printing the current execution state
++	 * this step of cleaning up is miss
+ 	 */
+-	if (planstate->instrument)
++	if (planstate->instrument && !es->runtime)
+ 		InstrEndLoop(planstate->instrument);
+ 
+ 	if (es->analyze &&
+@@ -1276,7 +1303,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
+ 			ExplainPropertyFloat("Actual Loops", nloops, 0, es);
+ 		}
+ 	}
+-	else if (es->analyze)
++	else if (es->analyze && !es->runtime)
+ 	{
+ 		if (es->format == EXPLAIN_FORMAT_TEXT)
+ 			appendStringInfoString(es->str, " (never executed)");
+@@ -1292,6 +1319,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
+ 		}
+ 	}
+ 
++	/*
++	 * print the progress of node execution at current loop
++	 */
++	if (planstate->instrument && es->analyze && es->runtime)
++	{
++		instr_time	starttimespan;
++		double	startup_sec;
++		double	total_sec;
++		double	rows;
++		double	loop_num;
++		bool 	finished;
++
++		if (!INSTR_TIME_IS_ZERO(planstate->instrument->starttime))
++		{
++			INSTR_TIME_SET_CURRENT(starttimespan);
++			INSTR_TIME_SUBTRACT(starttimespan, planstate->instrument->starttime);
++		}
++		else
++			INSTR_TIME_SET_ZERO(starttimespan);
++		startup_sec = 1000.0 * planstate->instrument->firsttuple;
++		total_sec = 1000.0 * (INSTR_TIME_GET_DOUBLE(planstate->instrument->counter)
++							+ INSTR_TIME_GET_DOUBLE(starttimespan));
++		rows = planstate->instrument->tuplecount;
++		loop_num = planstate->instrument->nloops + 1;
++
++		finished = planstate->instrument->nloops > 0
++				&& !planstate->instrument->running
++				&& INSTR_TIME_IS_ZERO(starttimespan);
++
++		if (!finished)
++		{
++			ExplainOpenGroup("Current loop", "Current loop", true, es);
++			if (es->format == EXPLAIN_FORMAT_TEXT)
++			{
++				if (es->timing)
++				{
++					if (planstate->instrument->running)
++						appendStringInfo(es->str,
++								" (Current loop: actual time=%.3f..%.3f rows=%.0f, loop number=%.0f)",
++								startup_sec, total_sec, rows, loop_num);
++					else
++						appendStringInfo(es->str,
++								" (Current loop: running time=%.3f actual rows=0, loop number=%.0f)",
++								total_sec, loop_num);
++				}
++				else
++					appendStringInfo(es->str,
++							" (Current loop: actual rows=%.0f, loop number=%.0f)",
++							rows, loop_num);
++			}
++			else
++			{
++				ExplainPropertyFloat("Actual Loop Number", loop_num, 0, es);
++				if (es->timing)
++				{
++					if (planstate->instrument->running)
++					{
++						ExplainPropertyFloat("Actual Startup Time", startup_sec, 3, es);
++						ExplainPropertyFloat("Actual Total Time", total_sec, 3, es);
++					}
++					else
++						ExplainPropertyFloat("Running Time", total_sec, 3, es);
++				}
++				ExplainPropertyFloat("Actual Rows", rows, 0, es);
++			}
++			ExplainCloseGroup("Current loop", "Current loop", true, es);
++		}
++	}
++
+ 	/* in text format, first line ends here */
+ 	if (es->format == EXPLAIN_FORMAT_TEXT)
+ 		appendStringInfoChar(es->str, '\n');
+@@ -2285,20 +2381,17 @@ show_instrumentation_count(const char *qlabel, int which,
+ 	if (!es->analyze || !planstate->instrument)
+ 		return;
+ 
++	nloops = planstate->instrument->nloops;
+ 	if (which == 2)
+-		nfiltered = planstate->instrument->nfiltered2;
++		nfiltered = ((nloops > 0) ? planstate->instrument->accum_nfiltered2 / nloops : 0)
++					+ planstate->instrument->nfiltered2;
+ 	else
+-		nfiltered = planstate->instrument->nfiltered1;
+-	nloops = planstate->instrument->nloops;
++		nfiltered = ((nloops > 0) ? planstate->instrument->accum_nfiltered1 / nloops : 0)
++					+ planstate->instrument->nfiltered1;
+ 
+ 	/* In text mode, suppress zero counts; they're not interesting enough */
+ 	if (nfiltered > 0 || es->format != EXPLAIN_FORMAT_TEXT)
+-	{
+-		if (nloops > 0)
+-			ExplainPropertyFloat(qlabel, nfiltered / nloops, 0, es);
+-		else
+-			ExplainPropertyFloat(qlabel, 0.0, 0, es);
+-	}
++		ExplainPropertyFloat(qlabel, nfiltered, 0, es);
+ }
+ 
+ /*
+@@ -2650,14 +2743,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
+ 			double		insert_path;
+ 			double		other_path;
+ 
+-			InstrEndLoop(mtstate->mt_plans[0]->instrument);
++			if (!es->runtime)
++				InstrEndLoop(mtstate->mt_plans[0]->instrument);
+ 
+ 			/* count the number of source rows */
+-			total = mtstate->mt_plans[0]->instrument->ntuples;
+-			other_path = mtstate->ps.instrument->nfiltered2;
+-			insert_path = total - other_path;
++			other_path = mtstate->ps.instrument->accum_nfiltered2
++						+ mtstate->ps.instrument->nfiltered2;
++
++			/*
++			 * Insert occurs after extracting row from subplan and in runtime mode
++			 * we can appear between these two operations - situation when
++			 * total > insert_path + other_path. Therefore we don't know exactly
++			 * whether last row from subplan is inserted.
++			 * We don't print inserted tuples in runtime mode in order to not print
++			 * inconsistent data
++			 */
++			if (!es->runtime)
++			{
++				total = mtstate->mt_plans[0]->instrument->ntuples;
++				insert_path = total - other_path;
++				ExplainPropertyFloat("Tuples Inserted", insert_path, 0, es);
++			}
+ 
+-			ExplainPropertyFloat("Tuples Inserted", insert_path, 0, es);
+ 			ExplainPropertyFloat("Conflicting Tuples", other_path, 0, es);
+ 		}
+ 	}
+diff --git a/src/backend/executor/instrument.c b/src/backend/executor/instrument.c
+index f5351eb..591ea0f 100644
+--- a/src/backend/executor/instrument.c
++++ b/src/backend/executor/instrument.c
+@@ -118,6 +118,8 @@ InstrEndLoop(Instrumentation *instr)
+ 	instr->total += totaltime;
+ 	instr->ntuples += instr->tuplecount;
+ 	instr->nloops += 1;
++	instr->accum_nfiltered1 += instr->nfiltered1;
++	instr->accum_nfiltered2 += instr->nfiltered2;
+ 
+ 	/* Reset for next cycle (if any) */
+ 	instr->running = false;
+@@ -125,6 +127,8 @@ InstrEndLoop(Instrumentation *instr)
+ 	INSTR_TIME_SET_ZERO(instr->counter);
+ 	instr->firsttuple = 0;
+ 	instr->tuplecount = 0;
++	instr->nfiltered1 = 0;
++	instr->nfiltered2 = 0;
+ }
+ 
+ /* dst += add - sub */
+diff --git a/src/include/commands/explain.h b/src/include/commands/explain.h
+index 26fcc5b..2ad3fb8 100644
+--- a/src/include/commands/explain.h
++++ b/src/include/commands/explain.h
+@@ -35,6 +35,8 @@ typedef struct ExplainState
+ 	bool		timing;			/* print detailed node timing */
+ 	bool		summary;		/* print total planning and execution timing */
+ 	ExplainFormat format;		/* output format */
++	bool		runtime;		/* print intermediate state of query execution,
++								   not after completion */
+ 	/* other states */
+ 	PlannedStmt *pstmt;			/* top of plan */
+ 	List	   *rtable;			/* range table */
+diff --git a/src/include/executor/instrument.h b/src/include/executor/instrument.h
+index c9a2129..c53517f 100644
+--- a/src/include/executor/instrument.h
++++ b/src/include/executor/instrument.h
+@@ -52,14 +52,16 @@ typedef struct Instrumentation
+ 	instr_time	counter;		/* Accumulated runtime for this node */
+ 	double		firsttuple;		/* Time for first tuple of this cycle */
+ 	double		tuplecount;		/* Tuples emitted so far this cycle */
++	double		nfiltered1;		/* # tuples removed by scanqual or joinqual */
++	double		nfiltered2;		/* # tuples removed by "other" quals */
+ 	BufferUsage bufusage_start; /* Buffer usage at start */
+ 	/* Accumulated statistics across all completed cycles: */
+ 	double		startup;		/* Total startup time (in seconds) */
+ 	double		total;			/* Total total time (in seconds) */
+ 	double		ntuples;		/* Total tuples produced */
+ 	double		nloops;			/* # of run cycles for this node */
+-	double		nfiltered1;		/* # tuples removed by scanqual or joinqual */
+-	double		nfiltered2;		/* # tuples removed by "other" quals */
++	double		accum_nfiltered1;	/* # tuples removed by scanqual or joinqual on previous loops */
++	double		accum_nfiltered2;	/* # tuples removed by "other" quals on previous loops */
+ 	BufferUsage bufusage;		/* Total buffer usage */
+ } Instrumentation;
+ 

@@ -1,0 +1,59 @@
+diff --git a/src/backend/executor/execProcnode.c b/src/backend/executor/execProcnode.c
+index 03c2feb..b8675d2 100644
+--- a/src/backend/executor/execProcnode.c
++++ b/src/backend/executor/execProcnode.c
+@@ -115,7 +115,6 @@
+ #include "executor/nodeWorktablescan.h"
+ #include "miscadmin.h"
+ 
+-
+ /* ------------------------------------------------------------------------
+  *		ExecInitNode
+  *
+@@ -356,6 +355,9 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
+ 	return result;
+ }
+ 
++/* Hooks for plugins to pre/post process ExecProcNode */
++PreExecProcNode_hook_type preExecProcNode_hook = NULL;
++PostExecProcNode_hook_type postExecProcNode_hook = NULL;
+ 
+ /* ----------------------------------------------------------------
+  *		ExecProcNode
+@@ -373,6 +375,9 @@ ExecProcNode(PlanState *node)
+ 	if (node->chgParam != NULL) /* something changed */
+ 		ExecReScan(node);		/* let ReScan handle this */
+ 
++	if (preExecProcNode_hook)
++		preExecProcNode_hook(node);
++
+ 	if (node->instrument)
+ 		InstrStartNode(node->instrument);
+ 
+@@ -529,6 +534,9 @@ ExecProcNode(PlanState *node)
+ 	if (node->instrument)
+ 		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
+ 
++	if (postExecProcNode_hook)
++		postExecProcNode_hook(node, result);
++
+ 	return result;
+ }
+ 
+diff --git a/src/include/executor/executor.h b/src/include/executor/executor.h
+index 110bc93..8801419 100644
+--- a/src/include/executor/executor.h
++++ b/src/include/executor/executor.h
+@@ -95,6 +95,12 @@ extern PGDLLIMPORT ExecutorEnd_hook_type ExecutorEnd_hook;
+ typedef bool (*ExecutorCheckPerms_hook_type) (List *, bool);
+ extern PGDLLIMPORT ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook;
+ 
++/* Hook for plugins to pre/post process ExecProcNode() */
++typedef void (*PreExecProcNode_hook_type) (PlanState *node);
++typedef void (*PostExecProcNode_hook_type) (PlanState *node, TupleTableSlot *result);
++extern PGDLLIMPORT PreExecProcNode_hook_type preExecProcNode_hook;
++extern PGDLLIMPORT PostExecProcNode_hook_type postExecProcNode_hook;
++
+ 
+ /*
+  * prototypes from functions in execAmi.c
