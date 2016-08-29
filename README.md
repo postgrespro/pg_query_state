@@ -7,6 +7,11 @@ Each complex query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/pl
 
 In fact, this module is able to explore external backend and determine its actual state. Particularly it's helpful when backend executes a heavy query or gets stuck.
 
+## Use cases
+Using this module there can help in the following things:
+ - detect a long query (along with other monitoring tools)
+ - overwatch the query execution ([example](https://asciinema.org/a/c0jon1i6g92hnb5q4492n1rzn))
+
 ## Installation
 To install `pg_query_state`, please apply patches `custom_signal.patch`, `executor_hooks.patch` and `runtime_explain.patch` to the latest stable version of PostgreSQL 9.5 and rebuild PostgreSQL.
 
@@ -275,5 +280,7 @@ count | 500000
 ```
 
 ## Feedback
+Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_query_state/issues) page.
+
 ## Authors
 Maksim Milyutin <m.milyutin@postgrespro.ru> Postgres Professional Ltd., Russia
