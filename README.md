@@ -30,12 +30,7 @@ CREATE EXTENSION pg_query_state;
 Done!
 
 ## Tests
-Testing of `pg_query_state` is carried out in module's directory and has two phases:
-1. Isolation tests for corner cases
-   ```
-   make check
-   ```
-2. Tests using parallel sessions using python 2.7 script:
+Tests using parallel sessions using python 2.7 script:
    ```
    python tests/pg_qs_test_runner.py [OPTION]...
    ```

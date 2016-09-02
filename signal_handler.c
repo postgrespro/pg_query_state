@@ -27,7 +27,7 @@ typedef struct
 /*
  *	Get List of stack_frames as a stack of function calls starting from outermost call.
  *		Each entry contains query text and query state in form of EXPLAIN ANALYZE output.
- *	Assume QueryDescStack is not empty
+ *	Assume extension is enabled and QueryDescStack is not empty
  */
 static List *
 runtime_explain()

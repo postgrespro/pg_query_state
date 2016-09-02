@@ -350,31 +350,41 @@ qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result)
 static void
 qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
-	/* Enable per-node instrumentation */
-	if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
+	PG_TRY();
 	{
-		queryDesc->instrument_options |= INSTRUMENT_ROWS;
-		if (pg_qs_timing)
-			queryDesc->instrument_options |= INSTRUMENT_TIMER;
-		if (pg_qs_buffers)
-			queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
+		/* Enable per-node instrumentation */
+		if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
+		{
+			queryDesc->instrument_options |= INSTRUMENT_ROWS;
+			if (pg_qs_timing)
+				queryDesc->instrument_options |= INSTRUMENT_TIMER;
+			if (pg_qs_buffers)
+				queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
+		}
+
+		if (prev_ExecutorStart)
+			prev_ExecutorStart(queryDesc, eflags);
+		else
+			standard_ExecutorStart(queryDesc, eflags);
+
+		/* push structure about current query in global stack */
+		QueryDescStack = lcons(queryDesc, QueryDescStack);
+
+		/* set/reset hook for trace mode before start of upper level query */
+		if (list_length(QueryDescStack) == 1)
+			postExecProcNode_hook = (pg_qs_enable && pg_qs_trace) ?
+										qs_postExecProcNode : prev_postExecProcNode;
+
+		/* suspend traceable query if it is not traceable or continued (hook is not thrown off) */
+		if (postExecProcNode_hook == qs_postExecProcNode)
+			suspend_traceable_query();
 	}
-
-	if (prev_ExecutorStart)
-		prev_ExecutorStart(queryDesc, eflags);
-	else
-		standard_ExecutorStart(queryDesc, eflags);
-
-	/* push structure about current query in global stack */
-	QueryDescStack = lcons(queryDesc, QueryDescStack);
-
-	/* set/reset hook for trace mode before start of upper level query */
-	if (list_length(QueryDescStack) == 1)
-		postExecProcNode_hook = (pg_qs_trace) ? qs_postExecProcNode : prev_postExecProcNode;
-
-	/* suspend traceable query if it is not continued (hook is not thrown off) */
-	if (postExecProcNode_hook == qs_postExecProcNode)
-		suspend_traceable_query();
+	PG_CATCH();
+	{
+		QueryDescStack = NIL;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 }
 
 /*
@@ -428,12 +438,21 @@ qs_ExecutorFinish(QueryDesc *queryDesc)
 static void
 qs_ExecutorEnd(QueryDesc *queryDesc)
 {
-	QueryDescStack = list_delete_first(QueryDescStack);
+	PG_TRY();
+	{
+		QueryDescStack = list_delete_first(QueryDescStack);
 
-	if (prev_ExecutorEnd)
-		prev_ExecutorEnd(queryDesc);
-	else
-		standard_ExecutorEnd(queryDesc);
+		if (prev_ExecutorEnd)
+			prev_ExecutorEnd(queryDesc);
+		else
+			standard_ExecutorEnd(queryDesc);
+	}
+	PG_CATCH();
+	{
+		QueryDescStack = NIL;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 }
 
 /*
