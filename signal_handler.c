@@ -169,10 +169,7 @@ SendQueryState(void)
 	/* check if module is enabled */
 	if (!pg_qs_enable)
 	{
-		shm_mq_msg msg = {
-			.length = BASE_SIZEOF_SHM_MQ_MSG,
-			.result_code = STAT_DISABLED
-		};
+		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, STAT_DISABLED };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -180,10 +177,7 @@ SendQueryState(void)
 	/* check if current user has not grants to request state of remote backend process */
 	else if (!(caller->superuser || (GetUserId() == caller->user_id)))
 	{
-		shm_mq_msg msg = {
-			.length = BASE_SIZEOF_SHM_MQ_MSG,
-			.result_code = PERM_DENIED
-		};
+		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, PERM_DENIED };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -191,10 +185,7 @@ SendQueryState(void)
 	/* check if backend doesn't execute any query */
 	else if (list_length(QueryDescStack) == 0)
 	{
-		shm_mq_msg msg = {
-			.length = BASE_SIZEOF_SHM_MQ_MSG,
-			.result_code = QUERY_NOT_RUNNING
-		};
+		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, QUERY_NOT_RUNNING };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}

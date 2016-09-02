@@ -225,7 +225,7 @@ plan       | {                                                          +
 ```
 
 ## Functions for tracing query execution
-For the purpose to achieve a slightly deterministic result from `pg_query_state` function under regression tests this module introduces specific fucntions for tracing query running on external backend process. In this case query is suspended after any node has worked off one step in pipeline structure of plan tree execution. Thus we can execute query specific number of steps and get its state which will be deterministic at least on number of emmited rows of each node.
+For the purpose to achieve a slightly deterministic result from `pg_query_state` function under regression tests this module introduces specific functions for query tracing running on external backend process. In this case query is suspended after any node has worked off one step in pipeline structure of plan tree execution. Thus we can execute query specific number of steps and get its state which will be deterministic at least on number of emitted rows of each node.
 
 Function `executor_step` which takes `pid` of traceable backend provides facility to perform single step of query execution. Function `executor_continue` which also takes `pid` completes query without trace interrupts.
 
