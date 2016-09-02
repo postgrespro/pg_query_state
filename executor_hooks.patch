@@ -1,5 +1,5 @@
 diff --git a/src/backend/executor/execProcnode.c b/src/backend/executor/execProcnode.c
-index 03c2feb..b8675d2 100644
+index 03c2feb..a33e645c 100644
 --- a/src/backend/executor/execProcnode.c
 +++ b/src/backend/executor/execProcnode.c
 @@ -115,7 +115,6 @@
@@ -20,22 +20,29 @@ index 03c2feb..b8675d2 100644
  
  /* ----------------------------------------------------------------
   *		ExecProcNode
-@@ -373,6 +375,9 @@ ExecProcNode(PlanState *node)
- 	if (node->chgParam != NULL) /* something changed */
+@@ -374,7 +376,12 @@ ExecProcNode(PlanState *node)
  		ExecReScan(node);		/* let ReScan handle this */
  
-+	if (preExecProcNode_hook)
-+		preExecProcNode_hook(node);
+ 	if (node->instrument)
++	{
++		if (preExecProcNode_hook)
++			preExecProcNode_hook(node);
 +
- 	if (node->instrument)
  		InstrStartNode(node->instrument);
++	}
  
-@@ -529,6 +534,9 @@ ExecProcNode(PlanState *node)
+ 	switch (nodeTag(node))
+ 	{
+@@ -527,8 +534,13 @@ ExecProcNode(PlanState *node)
+ 	}
+ 
  	if (node->instrument)
++	{
  		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
  
-+	if (postExecProcNode_hook)
-+		postExecProcNode_hook(node, result);
++		if (postExecProcNode_hook)
++			postExecProcNode_hook(node, result);
++	}
 +
  	return result;
  }
