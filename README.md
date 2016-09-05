@@ -1,6 +1,5 @@
 # pg\_query\_state
-
-The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the latest stable version of PostgreSQL 9.5.
+The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the latest stable version of PostgreSQL. Different branches are intended for different version numbers of PostgreSQL, e.g., branch _PG9_5_ corresponds to PostgreSQL 9.5.
 
 ## Overview
 Each complex query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree wich is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
@@ -13,7 +12,11 @@ Using this module there can help in the following things:
  - overwatch the query execution ([example](https://asciinema.org/a/c0jon1i6g92hnb5q4492n1rzn))
 
 ## Installation
-To install `pg_query_state`, please apply patches `custom_signal.patch`, `executor_hooks.patch` and `runtime_explain.patch` to the latest stable version of PostgreSQL 9.5 and rebuild PostgreSQL.
+To install `pg_query_state`, please apply patches `custom_signal.patch`, `executor_hooks.patch` and `runtime_explain.patch` to the latest stable version of PostgreSQL and rebuild PostgreSQL.
+
+Correspondence branch names to PostgreSQL version numbers:
+- _PG9_5_ --- PostgreSQL 9.5
+- _PGPRO9_5_ --- PostgresPro 9.5
 
 Then execute this in the module's directory:
 ```
