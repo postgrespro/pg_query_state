@@ -34,16 +34,16 @@ Tests using parallel sessions using python 2.7 script:
    ```
    python tests/pg_qs_test_runner.py [OPTION]...
    ```
-   *prerequisite packages*:
-     * `psycopg2` version 2.6 or later
-     * `PyYAML` version 3.11 or later
+*prerequisite packages*:
+* `psycopg2` version 2.6 or later
+* `PyYAML` version 3.11 or later
    
-   *options*:
-     * *- -host* --- postgres server host, default value is *localhost*
-     * *- -port* --- postgres server port, default value is *5432*
-     * *- -database* --- database name, default value is *postgres*
-     * *- -user* --- user name, default value is *postgres*
-     * *- -password* --- user's password, default value is empty
+*options*:
+* *- -host* --- postgres server host, default value is *localhost*
+* *- -port* --- postgres server port, default value is *5432*
+* *- -database* --- database name, default value is *postgres*
+* *- -user* --- user name, default value is *postgres*
+* *- -password* --- user's password, default value is empty
 
 ## Function pg\_query\_state
 ```plpgsql

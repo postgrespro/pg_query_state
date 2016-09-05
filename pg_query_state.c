@@ -375,7 +375,7 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			postExecProcNode_hook = (pg_qs_enable && pg_qs_trace) ?
 										qs_postExecProcNode : prev_postExecProcNode;
 
-		/* suspend traceable query if it is not traceable or continued (hook is not thrown off) */
+		/* suspend traceable query if it is not continued (hook is not thrown off) */
 		if (postExecProcNode_hook == qs_postExecProcNode)
 			suspend_traceable_query();
 	}
