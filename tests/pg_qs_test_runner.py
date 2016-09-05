@@ -48,7 +48,7 @@ tests = [
         test_timing,
         test_formats,
         test_timing_buffers_conflicts,
-		]
+        ]
 
 def setup(con):
 	''' Creates pg_query_state extension, creates tables for tests, fills it with data '''

@@ -85,7 +85,7 @@ def test_deadlock(config):
 
 	n_close((acon1, acon2))
 
-def query_state(config, async_conn, query, steps, args={}):
+def query_state(config, async_conn, query, steps, args={}, num_workers=0):
 	"""
 	Get intermediate state of 'query' on connection 'async_conn' after number of 'steps'
 	of node executions from start of query
@@ -96,6 +96,7 @@ def query_state(config, async_conn, query, steps, args={}):
 	curs = conn.cursor()
 
 	set_guc(async_conn, 'enable_mergejoin', 'off')
+	set_guc(async_conn, 'max_parallel_workers_per_gather', num_workers)
 	set_guc(async_conn, 'pg_query_state.executor_trace', 'on')
 
 	# execute 'query' specific number of 'steps'
@@ -275,7 +276,7 @@ def test_trigger(config):
 	util_curs.execute(create_trigger)
 	util_conn.commit()
 
-	qs = query_state(config, acon, query, num_steps, {'triggers': True})
+	qs = query_state(config, acon, query, num_steps,  {'triggers': True})
 	assert 	len(qs) == 2 \
 		and qs[0][0] == query and qs[0][1] == expected_upper + '\n' + trigger_suffix \
 		and qs[1][0] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][1] == expected_inner
@@ -298,7 +299,7 @@ def test_costs(config):
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 	num_steps = 10
-	expected = r"""Aggregate  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=0, loop number=1\)
+	expected = r"""Aggregate  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=8\) \(Current loop: actual rows=0, loop number=1\)
   ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=0, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1, loop number=1\)

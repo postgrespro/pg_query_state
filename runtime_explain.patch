@@ -1,8 +1,8 @@
 diff --git a/src/backend/commands/explain.c b/src/backend/commands/explain.c
-index 11047f7..3f5c638 100644
+index 82ba58e..bf7dfa6 100644
 --- a/src/backend/commands/explain.c
 +++ b/src/backend/commands/explain.c
-@@ -653,15 +653,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -667,15 +667,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  		Instrumentation *instr = rInfo->ri_TrigInstrument + nt;
  		char	   *relname;
  		char	   *conname = NULL;
@@ -41,7 +41,7 @@ index 11047f7..3f5c638 100644
  			continue;
  
  		ExplainOpenGroup("Trigger", NULL, true, es);
-@@ -687,9 +707,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -701,9 +721,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				appendStringInfo(es->str, " on %s", relname);
  			if (es->timing)
  				appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
@@ -53,7 +53,7 @@ index 11047f7..3f5c638 100644
  		}
  		else
  		{
-@@ -698,8 +718,8 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -712,8 +732,8 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				ExplainPropertyText("Constraint Name", conname, es);
  			ExplainPropertyText("Relation", relname, es);
  			if (es->timing)
@@ -64,7 +64,7 @@ index 11047f7..3f5c638 100644
  		}
  
  		if (conname)
-@@ -1247,8 +1267,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1225,8 +1245,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
  	 * instrumentation results the user didn't ask for.  But we do the
  	 * InstrEndLoop call anyway, if possible, to reduce the number of cases
  	 * auto_explain has to contend with.
@@ -77,7 +77,7 @@ index 11047f7..3f5c638 100644
  		InstrEndLoop(planstate->instrument);
  
  	if (es->analyze &&
-@@ -1281,7 +1304,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1259,7 +1282,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
  			ExplainPropertyFloat("Actual Loops", nloops, 0, es);
  		}
  	}
@@ -86,7 +86,7 @@ index 11047f7..3f5c638 100644
  	{
  		if (es->format == EXPLAIN_FORMAT_TEXT)
  			appendStringInfoString(es->str, " (never executed)");
-@@ -1297,6 +1320,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1275,6 +1298,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
  		}
  	}
  
@@ -162,7 +162,7 @@ index 11047f7..3f5c638 100644
  	/* in text format, first line ends here */
  	if (es->format == EXPLAIN_FORMAT_TEXT)
  		appendStringInfoChar(es->str, '\n');
-@@ -2293,20 +2385,17 @@ show_instrumentation_count(const char *qlabel, int which,
+@@ -2269,20 +2361,17 @@ show_instrumentation_count(const char *qlabel, int which,
  	if (!es->analyze || !planstate->instrument)
  		return;
  
@@ -189,7 +189,7 @@ index 11047f7..3f5c638 100644
  }
  
  /*
-@@ -2658,14 +2747,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
+@@ -2754,14 +2843,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  			double		insert_path;
  			double		other_path;
  
@@ -224,10 +224,10 @@ index 11047f7..3f5c638 100644
  		}
  	}
 diff --git a/src/backend/executor/instrument.c b/src/backend/executor/instrument.c
-index f5351eb..591ea0f 100644
+index 2614bf4..56d8a49 100644
 --- a/src/backend/executor/instrument.c
 +++ b/src/backend/executor/instrument.c
-@@ -118,6 +118,8 @@ InstrEndLoop(Instrumentation *instr)
+@@ -129,6 +129,8 @@ InstrEndLoop(Instrumentation *instr)
  	instr->total += totaltime;
  	instr->ntuples += instr->tuplecount;
  	instr->nloops += 1;
@@ -236,7 +236,7 @@ index f5351eb..591ea0f 100644
  
  	/* Reset for next cycle (if any) */
  	instr->running = false;
-@@ -125,6 +127,8 @@ InstrEndLoop(Instrumentation *instr)
+@@ -136,6 +138,8 @@ InstrEndLoop(Instrumentation *instr)
  	INSTR_TIME_SET_ZERO(instr->counter);
  	instr->firsttuple = 0;
  	instr->tuplecount = 0;
@@ -244,9 +244,9 @@ index f5351eb..591ea0f 100644
 +	instr->nfiltered2 = 0;
  }
  
- /* dst += add - sub */
+ /* aggregate instrumentation information */
 diff --git a/src/include/commands/explain.h b/src/include/commands/explain.h
-index 26fcc5b..2ad3fb8 100644
+index 3d0a5ab..1f0bde7 100644
 --- a/src/include/commands/explain.h
 +++ b/src/include/commands/explain.h
 @@ -35,6 +35,8 @@ typedef struct ExplainState
@@ -255,11 +255,11 @@ index 26fcc5b..2ad3fb8 100644
  	ExplainFormat format;		/* output format */
 +	bool		runtime;		/* print intermediate state of query execution,
 +								   not after completion */
- 	/* other states */
- 	PlannedStmt *pstmt;			/* top of plan */
- 	List	   *rtable;			/* range table */
+ 	/* state for output formatting --- not reset for each new plan tree */
+ 	int			indent;			/* current indentation level */
+ 	List	   *grouping_stack; /* format-specific grouping state */
 diff --git a/src/include/executor/instrument.h b/src/include/executor/instrument.h
-index c9a2129..c53517f 100644
+index 8e5f0ec..2a1b512 100644
 --- a/src/include/executor/instrument.h
 +++ b/src/include/executor/instrument.h
 @@ -52,14 +52,16 @@ typedef struct Instrumentation

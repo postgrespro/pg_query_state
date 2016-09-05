@@ -1,10 +1,10 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index 0abde43..961d267 100644
+index a3d6ac5..07270a9 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -67,12 +67,17 @@ typedef struct
+@@ -59,12 +59,17 @@ typedef struct
   */
- bool		set_latch_on_sigusr1;
+ #define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
  
 +static bool CustomSignalPendings[NUM_CUSTOM_PROCSIGNALS];
 +static ProcSignalHandler_type CustomHandlers[NUM_CUSTOM_PROCSIGNALS];
@@ -20,7 +20,7 @@ index 0abde43..961d267 100644
  /*
   * ProcSignalShmemSize
   *		Compute space needed for procsignal's shared memory
-@@ -173,6 +178,57 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -165,6 +170,57 @@ CleanupProcSignalState(int status, Datum arg)
  }
  
  /*
@@ -78,7 +78,7 @@ index 0abde43..961d267 100644
   * SendProcSignal
   *		Send a signal to a Postgres process
   *
-@@ -267,7 +323,8 @@ CheckProcSignal(ProcSignalReason reason)
+@@ -259,7 +315,8 @@ CheckProcSignal(ProcSignalReason reason)
  void
  procsignal_sigusr1_handler(SIGNAL_ARGS)
  {
@@ -88,7 +88,7 @@ index 0abde43..961d267 100644
  
  	if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
  		HandleCatchupInterrupt();
-@@ -296,6 +353,10 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -288,9 +345,55 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -96,10 +96,9 @@ index 0abde43..961d267 100644
 +		if (CheckProcSignal(reason))
 +			CustomSignalInterrupt(reason);
 +
- 	if (set_latch_on_sigusr1)
- 		SetLatch(MyLatch);
+ 	SetLatch(MyLatch);
  
-@@ -303,3 +364,45 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+ 	latch_sigusr1_handler();
  
  	errno = save_errno;
  }
@@ -146,10 +145,10 @@ index 0abde43..961d267 100644
 +		}
 +}
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index f78321d..9ef7dd8 100644
+index 98ccbbb..c5d649c 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -3006,6 +3006,8 @@ ProcessInterrupts(void)
+@@ -3005,6 +3005,8 @@ ProcessInterrupts(void)
  
  	if (ParallelMessagePending)
  		HandleParallelMessages();
@@ -159,7 +158,7 @@ index f78321d..9ef7dd8 100644
  
  
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index af1a0cd..507a63c 100644
+index f67b982..e941dcb 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
 @@ -17,6 +17,8 @@
@@ -215,5 +214,5 @@ index af1a0cd..507a63c 100644
 +extern void CheckAndHandleCustomSignals(void);
 +
  extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
- extern PGDLLIMPORT bool set_latch_on_sigusr1;
  
+ #endif   /* PROCSIGNAL_H */

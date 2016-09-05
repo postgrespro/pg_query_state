@@ -52,7 +52,7 @@ void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
-static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, long count);
+static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 static void qs_ExecutorEnd(QueryDesc *queryDesc);
 static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
@@ -392,7 +392,7 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * 		Catch any fatal signals
  */
 static void
-qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, long count)
+qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
 {
 	PG_TRY();
 	{
