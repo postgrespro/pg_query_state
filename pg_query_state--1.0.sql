@@ -8,7 +8,11 @@ CREATE FUNCTION pg_query_state(pid 		integer
 							 , buffers 	boolean = FALSE
 							 , triggers	boolean = FALSE
 						     , format	text = 'text')
-	RETURNS TABLE (query_text text, plan text)
+	RETURNS TABLE (pid integer
+				 , frame_number integer
+				 , query_text text
+				 , plan text
+				 , leader_pid integer)
 	AS 'MODULE_PATHNAME'
 	LANGUAGE C STRICT VOLATILE;
 

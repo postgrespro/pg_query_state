@@ -550,17 +550,19 @@ pg_query_state(PG_FUNCTION_ARGS)
 	typedef struct
 	{
 		ListCell 	*cursor;
+		int			index;
 		List		*stack;
 	} pg_qs_fctx;
 
 	FuncCallContext	*funcctx;
 	MemoryContext	oldcontext;
 	pg_qs_fctx		*fctx;
+	const int		N_ATTRS = 5;
+	pid_t			pid = PG_GETARG_INT32(0);
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		LOCKTAG			tag;
-		pid_t			pid = PG_GETARG_INT32(0);
 		bool			verbose = PG_GETARG_BOOL(1),
 						costs = PG_GETARG_BOOL(2),
 						timing = PG_GETARG_BOOL(3),
@@ -681,15 +683,19 @@ pg_query_state(PG_FUNCTION_ARGS)
 					fctx = (pg_qs_fctx *) palloc(sizeof(pg_qs_fctx));
 					qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
 					fctx->stack = qs_stack;
+					fctx->index = 0;
 					fctx->cursor = list_head(qs_stack);
 
 					funcctx->user_fctx = fctx;
 					funcctx->max_calls = list_length(qs_stack);
 
 					/* Make tuple descriptor */
-					tupdesc = CreateTemplateTupleDesc(2, false);
-					TupleDescInitEntry(tupdesc, (AttrNumber) 1, "query_text", TEXTOID, -1, 0);
-					TupleDescInitEntry(tupdesc, (AttrNumber) 2, "plan", TEXTOID, -1, 0);
+					tupdesc = CreateTemplateTupleDesc(N_ATTRS, false);
+					TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid", INT4OID, -1, 0);
+					TupleDescInitEntry(tupdesc, (AttrNumber) 2, "frame_number", INT4OID, -1, 0);
+					TupleDescInitEntry(tupdesc, (AttrNumber) 3, "query_text", TEXTOID, -1, 0);
+					TupleDescInitEntry(tupdesc, (AttrNumber) 4, "plan", TEXTOID, -1, 0);
+					TupleDescInitEntry(tupdesc, (AttrNumber) 5, "leader_pid", INT4OID, -1, 0);
 					funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
 					LockRelease(&tag, ExclusiveLock, false);
@@ -706,19 +712,23 @@ pg_query_state(PG_FUNCTION_ARGS)
 	if (funcctx->call_cntr < funcctx->max_calls)
 	{
 		HeapTuple 	tuple;
-		Datum		values[2];
-		bool		nulls[2];
+		Datum		values[N_ATTRS];
+		bool		nulls[N_ATTRS];
 		stack_frame	*frame = (stack_frame *) lfirst(fctx->cursor);
 
 		/* Make and return next tuple to caller */
 		MemSet(values, 0, sizeof(values));
 		MemSet(nulls, 0, sizeof(nulls));
-		values[0] = PointerGetDatum(frame->query);
-		values[1] = PointerGetDatum(frame->plan);
+		values[0] = Int32GetDatum(pid);
+		values[1] = Int32GetDatum(fctx->index);
+		values[2] = PointerGetDatum(frame->query);
+		values[3] = PointerGetDatum(frame->plan);
+		nulls[4] = true;
 		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
 		/* increment cursor */
 		fctx->cursor = lnext(fctx->cursor);
+		fctx->index++;
 
 		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 	}

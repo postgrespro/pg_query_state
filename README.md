@@ -17,6 +17,7 @@ To install `pg_query_state`, please apply patches `custom_signal.patch`, `execut
 Correspondence branch names to PostgreSQL version numbers:
 - _PG9_5_ --- PostgreSQL 9.5
 - _PGPRO9_5_ --- PostgresPro 9.5
+- _master_ --- development version for PostgreSQL 10devel
 
 Then execute this in the module's directory:
 ```
@@ -58,7 +59,9 @@ pg_query_state(integer 	pid,
 			   triggers	boolean DEFAULT FALSE,
 			   format	text 	DEFAULT 'text')
 ```
-Extract current query state from backend with specified `pid`. Since a function call causes nested subqueries so that state of execution may be viewed as stack of running queries, return value of `pg_query_state` has type `TABLE (query_text text, plan text)` and represents table where each row specifies stack frame -- correspondence between query and plan tree.
+Extract current query state from backend with specified `pid`. Since parallel query can spawn workers and function call causes nested subqueries so that state of execution may be viewed as stack of running queries, return value of `pg_query_state` has type `TABLE (pid integer, frame_number integer, query_text text, plan text, leader_pid integer)`. It represents tree structure consisting of leader process and its spawned workers. Each worker refers to leader through `leader_pid` column. For leader process the value of this column is` null`. For each process the stack frames are specified as correspondence between `frame_number`, `query_text` and `plan` columns.
+
+Thus, user can see the states of main query and queries generated from function calls for leader process and all workers spawned from it.
 
 In process of execution some nodes of plan tree can take loops of full execution. Therefore statistics for each node consists of two parts: average statistics for previous loops just like in EXPLAIN ANALYZE output and statistics for current loop if node have not finished.
 
