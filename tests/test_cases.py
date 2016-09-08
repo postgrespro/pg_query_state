@@ -139,7 +139,8 @@ def test_simple_query(config):
               ->  Seq Scan on bar \(Current loop: actual rows=9, loop number=1\)"""
 
 	qs = query_state(config, acon, query, num_steps)
-	assert	len(qs) == 1 and qs[0][0] == query and re.match(expected, qs[0][1])
+	assert	len(qs) == 1 and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
 	assert	len(notices) == 0
 
 	n_close((acon,))
@@ -161,8 +162,11 @@ def test_concurrent_access(config):
 
 	qs1, qs2 = acurs1.fetchall(), acurs2.fetchall()
 	assert 	len(qs1) == len(qs2) == 1 \
-		and qs1[0][0] == qs2[0][0] == query \
-		and len(qs1[0][1]) > 0 and len(qs2[0][1]) > 0
+		and qs1[0][0] == qs2[0][0] == acon3.get_backend_pid() \
+		and qs1[0][1] == qs2[0][1] == 0 \
+		and qs1[0][2] == qs2[0][2] == query \
+		and len(qs1[0][3]) > 0 and len(qs2[0][3]) > 0 \
+		and qs1[0][4] == qs2[0][4] == None
 	assert	len(notices) == 0
 
 	n_close((acon1, acon2, acon3))
@@ -199,10 +203,12 @@ def test_nested_call(config):
 
 	qs = query_state(config, acon, call_function, num_steps)
 	assert 	len(qs) == 2 \
-		and qs[0][0] == call_function and qs[0][1] == expected \
-		and qs[1][0] == nested_query and re.match(expected_nested, qs[1][1])
+		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
+		and qs[0][1] == 0 and qs[1][1] == 1 \
+		and qs[0][2] == call_function and qs[0][3] == expected \
+		and qs[1][2] == nested_query and re.match(expected_nested, qs[1][3]) \
+		and qs[0][4] == qs[1][4] == None
 	assert	len(notices) == 0
-
 
 	util_curs.execute(drop_function)
 
@@ -228,7 +234,10 @@ def test_insert_on_conflict(config):
 	util_conn.commit()
 
 	qs = query_state(config, acon, query, num_steps)
-	assert 	len(qs) == 1 and qs[0][0] == query and qs[0][1] == expected
+	assert 	len(qs) == 1 \
+		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and qs[0][3] == expected \
+		and qs[0][4] == None
 	assert	len(notices) == 0
 
 	util_curs.execute(drop_field_uniqueness)
@@ -278,14 +287,22 @@ def test_trigger(config):
 
 	qs = query_state(config, acon, query, num_steps,  {'triggers': True})
 	assert 	len(qs) == 2 \
-		and qs[0][0] == query and qs[0][1] == expected_upper + '\n' + trigger_suffix \
-		and qs[1][0] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][1] == expected_inner
+		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and qs[0][3] == expected_upper + '\n' + trigger_suffix \
+		and qs[0][4] == None \
+		and qs[1][0] == acon.get_backend_pid() and qs[1][1] == 1 \
+		and qs[1][2] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][3] == expected_inner \
+		and qs[1][4] == None
 	assert	len(notices) == 0
 
 	qs = query_state(config, acon, query, num_steps, {'triggers': False})
 	assert 	len(qs) == 2 \
-		and qs[0][0] == query and qs[0][1] == expected_upper \
-		and qs[1][0] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][1] == expected_inner
+		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and qs[0][3] == expected_upper \
+		and qs[0][4] == None \
+		and qs[1][0] == acon.get_backend_pid() and qs[1][1] == 1 \
+		and qs[1][2] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][3] == expected_inner \
+		and qs[1][4] == None
 	assert	len(notices) == 0
 
 	util_curs.execute(drop_temps)
@@ -308,7 +325,7 @@ def test_costs(config):
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=9, loop number=1\)"""
 
 	qs = query_state(config, acon, query, num_steps, {'costs': True})
-	assert 	len(qs) == 1 and re.match(expected, qs[0][1])
+	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
 	n_close((acon,))
@@ -332,7 +349,7 @@ def test_buffers(config):
 	set_guc(acon, 'pg_query_state.enable_buffers', 'on')
 
 	qs = query_state(config, acon, query, num_steps, {'buffers': True})
-	assert 	len(qs) == 1 and re.match(expected, qs[0][1])
+	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
 	n_close((acon,))
@@ -354,7 +371,7 @@ def test_timing(config):
 	set_guc(acon, 'pg_query_state.enable_timing', 'on')
 
 	qs = query_state(config, acon, query, num_steps, {'timing': True})
-	assert 	len(qs) == 1 and re.match(expected, qs[0][1])
+	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
 	n_close((acon,))
@@ -394,12 +411,12 @@ def test_formats(config):
               ->  Seq Scan on bar \(Current loop: actual rows=9, loop number=1\)"""
 
 	qs = query_state(config, acon, query, num_steps, {'format': 'text'})
-	assert 	len(qs) == 1 and re.match(expected, qs[0][1])
+	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
 	qs = query_state(config, acon, query, num_steps, {'format': 'json'})
 	try:
-		js_obj = json.loads(qs[0][1])
+		js_obj = json.loads(qs[0][3])
 	except ValueError:
 		assert False, 'Invalid json format'
 	assert	len(qs) == 1
@@ -410,14 +427,14 @@ def test_formats(config):
 	assert 	len(qs) == 1
 	assert	len(notices) == 0
 	try:
-		xml_root = ET.fromstring(qs[0][1])
+		xml_root = ET.fromstring(qs[0][3])
 	except:
 		assert False, 'Invalid xml format'
 	check_xml(xml_root)
 
 	qs = query_state(config, acon, query, num_steps, {'format': 'yaml'})
 	try:
-		yaml_doc = yaml.load(qs[0][1])
+		yaml_doc = yaml.load(qs[0][3])
 	except:
 		assert False, 'Invalid yaml format'
 	assert 	len(qs) == 1
@@ -436,16 +453,16 @@ def test_timing_buffers_conflicts(config):
 	buffers_pattern = 'Buffers:'
 
 	qs = query_state(config, acon, query, num_steps, {'timing': True, 'buffers': False})
-	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][1])
+	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
 	assert notices == ['WARNING:  timing statistics disabled\n']
 
 	qs = query_state(config, acon, query, num_steps, {'timing': False, 'buffers': True})
-	assert 	len(qs) == 1 and not re.search(buffers_pattern, qs[0][1])
+	assert 	len(qs) == 1 and not re.search(buffers_pattern, qs[0][3])
 	assert notices == ['WARNING:  buffers statistics disabled\n']
 
 	qs = query_state(config, acon, query, num_steps, {'timing': True, 'buffers': True})
-	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][1]) \
-						 and not re.search(buffers_pattern, qs[0][1])
+	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3]) \
+						 and not re.search(buffers_pattern, qs[0][3])
 	assert len(notices) == 2 and 'WARNING:  timing statistics disabled\n' in notices \
 							 and 'WARNING:  buffers statistics disabled\n' in notices
 
