@@ -17,9 +17,11 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/ipc.h"
+#include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/shm_toc.h"
 #include "utils/guc.h"
+#include "utils/timestamp.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -60,6 +62,7 @@ static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 /* Global variables */
 List 					*QueryDescStack = NIL;
 static ProcSignalReason QueryStatePollReason;
+static ProcSignalReason RolePollReason;
 static bool 			module_initialized = false;
 static const char		*be_state_str[] = {						/* BackendState -> string repr */
 							"undefined",						/* STATE_UNDEFINED */
@@ -89,6 +92,9 @@ typedef struct
 	pid_t 		tracer;
 	pid_t 		traceable;
 } trace_request;
+
+static void SendCurrentRoleOid(void);
+Oid GetRemoteBackendUser(pid_t pid, int *error_code);
 
 /* Shared memory variables */
 shm_toc			*toc = NULL;
@@ -181,7 +187,8 @@ _PG_init(void)
 
 	/* Register interrupt on custom signal of polling query state */
 	QueryStatePollReason = RegisterCustomProcSignalHandler(SendQueryState);
-	if (QueryStatePollReason == INVALID_PROCSIGNAL)
+	RolePollReason = RegisterCustomProcSignalHandler(SendCurrentRoleOid);
+	if (QueryStatePollReason == INVALID_PROCSIGNAL || RolePollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
@@ -608,6 +615,9 @@ pg_query_state(PG_FUNCTION_ARGS)
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
 
+		int error_code;
+		Oid user_id = GetRemoteBackendUser(pid, &error_code);
+
 		/* fill in caller's user data */
 		caller->user_id = GetUserId();
 		caller->superuser = superuser();
@@ -810,4 +820,88 @@ executor_continue(PG_FUNCTION_ARGS)
 	exec_trace_cmd(pid, CONTINUE);
 
 	PG_RETURN_VOID();
+}
+
+static shm_mq_result
+shm_mq_receive_with_timeout(shm_mq_handle *mqh, Size *nbytesp, void **datap, long timeout)
+{
+
+#ifdef HAVE_INT64_TIMESTAMP
+#define GetNowLong()	((long) GetCurrentTimestamp() / 1000)
+#else
+#define GetNowLong()	1000 * GetCurrentTimestamp()
+#endif
+
+	long endtime = GetNowLong() + timeout;
+
+	for (;;)
+	{
+		int 		rc;
+		long 		delay;
+		shm_mq_result mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
+
+		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
+			return mq_receive_result;
+
+		delay = endtime - GetNowLong();
+		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+		CHECK_FOR_INTERRUPTS();
+		ResetLatch(MyLatch);
+
+		if (rc & WL_TIMEOUT)
+			return SHM_MQ_WOULD_BLOCK;
+	}
+}
+
+static void
+SendCurrentRoleOid(void)
+{
+	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
+	Oid 			role_oid = GetUserId();
+
+	shm_mq_send(mqh, sizeof(Oid), &role_oid, false);
+}
+
+#define NOT_BACKEND_PROCESS		1
+#define COULD_NOT_SEND_SIGNAL 	2
+#define INVALID_MQ_READ			3
+
+Oid
+GetRemoteBackendUser(pid_t pid, int *error_code)
+{
+	PGPROC		*proc = BackendPidGetProc(pid);
+	int			sig_result;
+	shm_mq_handle *mqh;
+	shm_mq_result mq_receive_result;
+	Oid			*result;
+	Size		res_len;
+
+	if (proc == NULL || proc->backendId == InvalidBackendId)
+	{
+		*error_code = NOT_BACKEND_PROCESS;
+		return InvalidOid;
+	}
+
+	mq = shm_mq_create(mq, QUEUE_SIZE);
+	shm_mq_set_sender(mq, proc);
+	shm_mq_set_receiver(mq, MyProc);
+
+	sig_result = SendProcSignal(pid, RolePollReason, proc->backendId);
+	if (sig_result == -1)
+	{
+		*error_code = COULD_NOT_SEND_SIGNAL;
+		return InvalidOid;
+	}
+
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	mq_receive_result = shm_mq_receive_with_timeout(mqh, &res_len, (void **) &result, 1000);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+	{
+		*error_code = INVALID_MQ_READ;
+		return InvalidOid;
+	}
+
+	shm_mq_detach(mq);
+
+	return *result;
 }
