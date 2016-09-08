@@ -153,18 +153,7 @@ serialize_stack(char *dest, List *qs_stack)
 void
 SendQueryState(void)
 {
-	shm_mq_handle 	*mqh;
-	MemoryContext	curCxt;
-	MemoryContext	oldCxt;
-
-	curCxt = AllocSetContextCreate(CurrentMemoryContext,
-									"pg_query_state signal handler context",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
-	oldCxt = MemoryContextSwitchTo(curCxt);
-
-	mqh = shm_mq_attach(mq, NULL, NULL);
+	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
 
 	/* check if module is enabled */
 	if (!pg_qs_enable)
@@ -210,7 +199,4 @@ SendQueryState(void)
 		serialize_stack(msg->stack, qs_stack);
 		shm_mq_send(mqh, msglen, msg, false);
 	}
-
-	MemoryContextSwitchTo(oldCxt);
-	MemoryContextDelete(curCxt);
 }

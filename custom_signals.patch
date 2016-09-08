@@ -1,8 +1,16 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index a3d6ac5..07270a9 100644
+index a3d6ac5..60732a6 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -59,12 +59,17 @@ typedef struct
+@@ -26,6 +26,7 @@
+ #include "storage/shmem.h"
+ #include "storage/sinval.h"
+ #include "tcop/tcopprot.h"
++#include "utils/memutils.h"
+ 
+ 
+ /*
+@@ -59,12 +60,17 @@ typedef struct
   */
  #define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
  
@@ -20,7 +28,7 @@ index a3d6ac5..07270a9 100644
  /*
   * ProcSignalShmemSize
   *		Compute space needed for procsignal's shared memory
-@@ -165,6 +170,57 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -165,6 +171,57 @@ CleanupProcSignalState(int status, Datum arg)
  }
  
  /*
@@ -78,7 +86,7 @@ index a3d6ac5..07270a9 100644
   * SendProcSignal
   *		Send a signal to a Postgres process
   *
-@@ -259,7 +315,8 @@ CheckProcSignal(ProcSignalReason reason)
+@@ -259,7 +316,8 @@ CheckProcSignal(ProcSignalReason reason)
  void
  procsignal_sigusr1_handler(SIGNAL_ARGS)
  {
@@ -88,7 +96,7 @@ index a3d6ac5..07270a9 100644
  
  	if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
  		HandleCatchupInterrupt();
-@@ -288,9 +345,55 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -288,9 +346,88 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -132,6 +140,32 @@ index a3d6ac5..07270a9 100644
 +CheckAndHandleCustomSignals(void)
 +{
 +	int i;
++	MemoryContext oldcontext;
++
++	static MemoryContext hcs_context = NULL;
++
++	/*
++	 * This is invoked from ProcessInterrupts(), and since some of the
++	 * functions it calls contain CHECK_FOR_INTERRUPTS(), there is a potential
++	 * for recursive calls if more signals are received while this runs.  It's
++	 * unclear that recursive entry would be safe, and it doesn't seem useful
++	 * even if it is safe, so let's block interrupts until done.
++	 */
++	HOLD_INTERRUPTS();
++
++	/*
++	 * Moreover, CurrentMemoryContext might be pointing almost anywhere.  We
++	 * don't want to risk leaking data into long-lived contexts, so let's do
++	 * our work here in a private context that we can reset on each use.
++	 */
++	if (hcs_context == NULL)	/* first time through? */
++		hcs_context = AllocSetContextCreate(TopMemoryContext,
++											"HandleCustomSignals",
++											ALLOCSET_DEFAULT_SIZES);
++	else
++		MemoryContextReset(hcs_context);
++
++	oldcontext = MemoryContextSwitchTo(hcs_context);
 +
 +	for (i = 0; i < NUM_CUSTOM_PROCSIGNALS; i++)
 +		if (CustomSignalPendings[i])
@@ -143,6 +177,13 @@ index a3d6ac5..07270a9 100644
 +			if (handler)
 +				handler();
 +		}
++
++	MemoryContextSwitchTo(oldcontext);
++
++	/* Might as well clear the context on our way out */
++	MemoryContextReset(hcs_context);
++
++	RESUME_INTERRUPTS();
 +}
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 index 98ccbbb..c5d649c 100644
