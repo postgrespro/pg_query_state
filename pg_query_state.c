@@ -4,8 +4,8 @@
  *
  * Copyright (c) 2016-2016, Postgres Professional
  *
- * IDENTIFICATION
  *	  contrib/pg_query_state/pg_query_state.c
+ * IDENTIFICATION
  */
 
 #include "pg_query_state.h"
@@ -13,9 +13,13 @@
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "executor/execParallel.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
+#include "nodes/print.h"
 #include "pgstat.h"
+#include "postmaster/bgworker.h"
 #include "storage/ipc.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
@@ -63,6 +67,7 @@ static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 List 					*QueryDescStack = NIL;
 static ProcSignalReason QueryStatePollReason;
 static ProcSignalReason RolePollReason;
+static ProcSignalReason WorkerPollReason;
 static bool 			module_initialized = false;
 static const char		*be_state_str[] = {						/* BackendState -> string repr */
 							"undefined",						/* STATE_UNDEFINED */
@@ -93,8 +98,10 @@ typedef struct
 	pid_t 		traceable;
 } trace_request;
 
-static void SendCurrentRoleOid(void);
-Oid GetRemoteBackendUser(pid_t pid, int *error_code);
+static void SendCurrentUserId(void);
+Oid GetRemoteBackendUserId(PGPROC *proc, int *error_code);
+static void SendWorkerPids(void);
+List *GetRemoteBackendWorkers(PGPROC *proc, int *error_code);
 
 /* Shared memory variables */
 shm_toc			*toc = NULL;
@@ -187,8 +194,10 @@ _PG_init(void)
 
 	/* Register interrupt on custom signal of polling query state */
 	QueryStatePollReason = RegisterCustomProcSignalHandler(SendQueryState);
-	RolePollReason = RegisterCustomProcSignalHandler(SendCurrentRoleOid);
-	if (QueryStatePollReason == INVALID_PROCSIGNAL || RolePollReason == INVALID_PROCSIGNAL)
+	RolePollReason = RegisterCustomProcSignalHandler(SendCurrentUserId);
+	WorkerPollReason = RegisterCustomProcSignalHandler(SendWorkerPids);
+	if (QueryStatePollReason == INVALID_PROCSIGNAL || RolePollReason == INVALID_PROCSIGNAL
+		|| WorkerPollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
@@ -615,9 +624,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
 
-		int error_code;
-		Oid user_id = GetRemoteBackendUser(pid, &error_code);
-
 		/* fill in caller's user data */
 		caller->user_id = GetUserId();
 		caller->superuser = superuser();
@@ -827,39 +833,39 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh, Size *nbytesp, void **datap, lon
 {
 
 #ifdef HAVE_INT64_TIMESTAMP
-#define GetNowLong()	((long) GetCurrentTimestamp() / 1000)
+#define GetNowFloat()	((float8) GetCurrentTimestamp() / 1000.0)
 #else
-#define GetNowLong()	1000 * GetCurrentTimestamp()
+#define GetNowFloat()	1000.0 * GetCurrentTimestamp()
 #endif
 
-	long endtime = GetNowLong() + timeout;
+	float8 	endtime = GetNowFloat() + timeout;
+	int 	rc = 0;
 
 	for (;;)
 	{
-		int 		rc;
 		long 		delay;
 		shm_mq_result mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
 
 		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
 			return mq_receive_result;
 
-		delay = endtime - GetNowLong();
+		if (rc & WL_TIMEOUT)
+			return SHM_MQ_WOULD_BLOCK;
+
+		delay = (long) (endtime - GetNowFloat());
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
-
-		if (rc & WL_TIMEOUT)
-			return SHM_MQ_WOULD_BLOCK;
 	}
 }
 
 static void
-SendCurrentRoleOid(void)
+SendCurrentUserId(void)
 {
 	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
-	Oid 			role_oid = GetUserId();
+	Oid 			user_oid = GetUserId();
 
-	shm_mq_send(mqh, sizeof(Oid), &role_oid, false);
+	shm_mq_send(mqh, sizeof(Oid), &user_oid, false);
 }
 
 #define NOT_BACKEND_PROCESS		1
@@ -867,16 +873,15 @@ SendCurrentRoleOid(void)
 #define INVALID_MQ_READ			3
 
 Oid
-GetRemoteBackendUser(pid_t pid, int *error_code)
+GetRemoteBackendUserId(PGPROC *proc, int *error_code)
 {
-	PGPROC		*proc = BackendPidGetProc(pid);
 	int			sig_result;
-	shm_mq_handle *mqh;
-	shm_mq_result mq_receive_result;
+	shm_mq_handle	*mqh;
+	shm_mq_result 	mq_receive_result;
 	Oid			*result;
 	Size		res_len;
 
-	if (proc == NULL || proc->backendId == InvalidBackendId)
+	if (proc->backendId == InvalidBackendId)
 	{
 		*error_code = NOT_BACKEND_PROCESS;
 		return InvalidOid;
@@ -886,7 +891,7 @@ GetRemoteBackendUser(pid_t pid, int *error_code)
 	shm_mq_set_sender(mq, proc);
 	shm_mq_set_receiver(mq, MyProc);
 
-	sig_result = SendProcSignal(pid, RolePollReason, proc->backendId);
+	sig_result = SendProcSignal(proc->pid, RolePollReason, proc->backendId);
 	if (sig_result == -1)
 	{
 		*error_code = COULD_NOT_SEND_SIGNAL;
@@ -904,4 +909,114 @@ GetRemoteBackendUser(pid_t pid, int *error_code)
 	shm_mq_detach(mq);
 
 	return *result;
+}
+
+static bool
+extract_worker_handles(PlanState *node, List **result)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, GatherState))
+	{
+		GatherState *gather_node = (GatherState *) node;
+		int 		i;
+
+		if (gather_node->pei)
+		{
+			for (i = 0; i < gather_node->pei->pcxt->nworkers_launched; i++)
+			{
+				pid_t 					pid;
+				BackgroundWorkerHandle 	*bgwh = gather_node->pei->pcxt->worker[i].bgwhandle;
+				BgwHandleStatus 		status;
+
+				if (!bgwh)
+					continue;
+
+				status = GetBackgroundWorkerPid(bgwh, &pid);
+				if (status == BGWH_STARTED)
+					*result = lcons_int(pid, *result);
+			}
+		}
+	}
+	return planstate_tree_walker(node, extract_worker_handles, (void *) result);
+}
+
+typedef struct
+{
+	int 	num;
+	pid_t 	pids[FLEXIBLE_ARRAY_MEMBER];
+} workers_msg;
+
+static void
+SendWorkerPids(void)
+{
+	ListCell 	*iter;
+	List 		*all_workers = NIL;
+	workers_msg *msg;
+	int			msg_len;
+	int			i;
+	shm_mq_handle *mqh = shm_mq_attach(mq, NULL, NULL);
+
+	foreach(iter, QueryDescStack)
+	{
+		QueryDesc	*curQueryDesc = (QueryDesc *) lfirst(iter);
+		List 		*bgworker_pids = NIL;
+
+		extract_worker_handles(curQueryDesc->planstate, &bgworker_pids);
+		all_workers = list_concat(all_workers, bgworker_pids);
+	}
+
+	msg_len = offsetof(workers_msg, pids) + sizeof(pid_t) * list_length(all_workers);
+	msg = palloc(msg_len);
+	msg->num = list_length(all_workers);
+	i = 0;
+	foreach(iter, all_workers)
+		msg->pids[i++] = lfirst_int(iter);
+
+	shm_mq_send(mqh, msg_len, msg, false);
+}
+
+List *
+GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
+{
+	int				sig_result;
+	shm_mq_handle	*mqh;
+	shm_mq_result 	mq_receive_result;
+	workers_msg		*msg;
+	Size			msg_len;
+	int				i;
+	List			*result = NIL;
+
+	if (proc->backendId == InvalidBackendId)
+	{
+		*error_code = NOT_BACKEND_PROCESS;
+		return InvalidOid;
+	}
+
+	mq = shm_mq_create(mq, QUEUE_SIZE);
+	shm_mq_set_sender(mq, proc);
+	shm_mq_set_receiver(mq, MyProc);
+
+	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
+	if (sig_result == -1)
+	{
+		*error_code = COULD_NOT_SEND_SIGNAL;
+		return InvalidOid;
+	}
+
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+	{
+		*error_code = INVALID_MQ_READ;
+		return InvalidOid;
+	}
+
+	for (i = 0; i < msg->num; i++)
+		result = lcons_int(msg->pids[i], result);
+
+	shm_mq_detach(mq);
+
+	return result;
 }
