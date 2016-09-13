@@ -163,14 +163,6 @@ SendQueryState(void)
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
 
-	/* check if current user has not grants to request state of remote backend process */
-	else if (!(caller->superuser || (GetUserId() == caller->user_id)))
-	{
-		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, PERM_DENIED };
-
-		shm_mq_send(mqh, msg.length, &msg, false);
-	}
-
 	/* check if backend doesn't execute any query */
 	else if (list_length(QueryDescStack) == 0)
 	{

@@ -25,7 +25,6 @@
 typedef enum
 {
 	QUERY_NOT_RUNNING,		/* Backend doesn't execute any query */
-	PERM_DENIED,			/* Requested party has not enough permission to get query state */
 	STAT_DISABLED,			/* Collection of execution statistics is disabled */
 	QS_RETURNED				/* Backend succesfully returned its query state */
 } PG_QS_RequestResult;
@@ -45,12 +44,6 @@ typedef struct
 
 #define BASE_SIZEOF_SHM_MQ_MSG (offsetof(shm_mq_msg, stack_depth))
 
-typedef struct
-{
-	Oid 	user_id;
-	bool	superuser;
-} user_data;
-
 /* pg_query_state arguments */
 typedef struct
 {
@@ -67,7 +60,6 @@ extern bool 	pg_qs_enable;
 extern bool 	pg_qs_timing;
 extern bool 	pg_qs_buffers;
 extern List 	*QueryDescStack;
-extern user_data *caller;
 extern pg_qs_params *params;
 extern shm_mq 	*mq;
 

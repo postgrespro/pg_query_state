@@ -99,14 +99,13 @@ typedef struct
 } trace_request;
 
 static void SendCurrentUserId(void);
-Oid GetRemoteBackendUserId(PGPROC *proc, int *error_code);
+Oid GetRemoteBackendUserId(PGPROC *proc);
 static void SendWorkerPids(void);
 List *GetRemoteBackendWorkers(PGPROC *proc, int *error_code);
 
 /* Shared memory variables */
 shm_toc			*toc = NULL;
-user_data		*caller = NULL;
-pg_qs_params	*params = NULL;
+pg_qs_params   	*params = NULL;
 trace_request	*trace_req = NULL;
 shm_mq 			*mq = NULL;
 
@@ -122,11 +121,10 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 4;
+	nkeys = 3;
 
-	shm_toc_estimate_chunk(&e, sizeof(user_data));
-	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, sizeof(trace_request));
+	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
 
 	shm_toc_estimate_keys(&e, nkeys);
@@ -144,30 +142,28 @@ pg_qs_shmem_startup(void)
 	bool	found;
 	Size	shmem_size = pg_qs_shmem_size();
 	void	*shmem;
+	int		num_toc = 0;
 
 	shmem = ShmemInitStruct("pg_query_state", shmem_size, &found);
 	if (!found)
 	{
 		toc = shm_toc_create(PG_QS_MODULE_KEY, shmem, shmem_size);
 
-		caller = shm_toc_allocate(toc, sizeof(user_data));
-		shm_toc_insert(toc, 0, caller);
 		params = shm_toc_allocate(toc, sizeof(pg_qs_params));
-		shm_toc_insert(toc, 1, params);
+		shm_toc_insert(toc, num_toc++, params);
 		trace_req = shm_toc_allocate(toc, sizeof(trace_request));
-		shm_toc_insert(toc, 2, trace_req);
+		shm_toc_insert(toc, num_toc++, trace_req);
 		MemSet(trace_req, 0, sizeof(trace_request));
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
-		shm_toc_insert(toc, 3, mq);
+		shm_toc_insert(toc, num_toc++, mq);
 	}
 	else
 	{
 		toc = shm_toc_attach(PG_QS_MODULE_KEY, shmem);
 
-		caller = shm_toc_lookup(toc, 0);
-		params = shm_toc_lookup(toc, 1);
-		trace_req = shm_toc_lookup(toc, 2);
-		mq = shm_toc_lookup(toc, 3);
+		params = shm_toc_lookup(toc, num_toc++);
+		trace_req = shm_toc_lookup(toc, num_toc++);
+		mq = shm_toc_lookup(toc, num_toc++);
 	}
 
 	if (prev_shmem_startup_hook)
@@ -283,27 +279,6 @@ _PG_fini(void)
 }
 
 /*
- * Find PGPROC entry
- */
-static PGPROC *
-search_proc(int pid)
-{
-	int i;
-
-	if (pid <= 0)
-		return NULL;
-
-	for (i = 0; i < ProcGlobal->allProcCount; i++)
-	{
-		PGPROC	*proc = &ProcGlobal->allProcs[i];
-		if (proc->pid == pid)
-			return proc;
-	}
-
-	return NULL;
-}
-
-/*
  * In trace mode suspend query execution until other backend resumes it
  */
 static void
@@ -314,7 +289,7 @@ suspend_traceable_query()
 		/* Check whether current backend is traced */
 		if (MyProcPid == trace_req->traceable)
 		{
-			PGPROC *tracer = search_proc(trace_req->tracer);
+			PGPROC *tracer = BackendPidGetProc(trace_req->tracer);
 
 			Assert(tracer != NULL);
 
@@ -587,6 +562,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 		text			*format_text = PG_GETARG_TEXT_P(6);
 		ExplainFormat	format;
 		PGPROC			*proc;
+		Oid				counterpart_user_id;
 		shm_mq_handle  	*mqh;
 		shm_mq_result	mq_receive_result;
 		int				send_signal_result;
@@ -601,7 +577,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("attempt to extract state of current process")));
 
-		proc = search_proc(pid);
+		proc = BackendPidGetProc(pid);
 		if (!proc || proc->backendId == InvalidBackendId)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
@@ -624,9 +600,10 @@ pg_query_state(PG_FUNCTION_ARGS)
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
 
-		/* fill in caller's user data */
-		caller->user_id = GetUserId();
-		caller->superuser = superuser();
+		counterpart_user_id = GetRemoteBackendUserId(proc);
+		if (!(superuser() || GetUserId() == counterpart_user_id))
+			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+							errmsg("permission denied")));
 
 		/* fill in parameters of query state request */
 		params->verbose = verbose;
@@ -673,9 +650,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 					LockRelease(&tag, ExclusiveLock, false);
 					SRF_RETURN_DONE(funcctx);
 				}
-			case PERM_DENIED:
-				ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-								errmsg("permission denied")));
 			case STAT_DISABLED:
 				elog(INFO, "query execution statistics disabled");
 				LockRelease(&tag, ExclusiveLock, false);
@@ -769,7 +743,7 @@ exec_trace_cmd(pid_t pid, trace_cmd cmd)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("attempt to trace self process")));
 
-	proc = search_proc(pid);
+	proc = BackendPidGetProc(pid);
 	if (!proc || proc->backendId == InvalidBackendId)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("backend with pid=%d not found", pid)));
@@ -872,8 +846,12 @@ SendCurrentUserId(void)
 #define COULD_NOT_SEND_SIGNAL 	2
 #define INVALID_MQ_READ			3
 
+/*
+ * Extract effective user id of external backend session
+ * 		Assume `proc` is valid backend and doesn't point to current process
+ */
 Oid
-GetRemoteBackendUserId(PGPROC *proc, int *error_code)
+GetRemoteBackendUserId(PGPROC *proc)
 {
 	int			sig_result;
 	shm_mq_handle	*mqh;
@@ -881,11 +859,7 @@ GetRemoteBackendUserId(PGPROC *proc, int *error_code)
 	Oid			*result;
 	Size		res_len;
 
-	if (proc->backendId == InvalidBackendId)
-	{
-		*error_code = NOT_BACKEND_PROCESS;
-		return InvalidOid;
-	}
+	Assert(proc && proc != MyProc && proc->backendId != InvalidBackendId);
 
 	mq = shm_mq_create(mq, QUEUE_SIZE);
 	shm_mq_set_sender(mq, proc);
@@ -893,18 +867,14 @@ GetRemoteBackendUserId(PGPROC *proc, int *error_code)
 
 	sig_result = SendProcSignal(proc->pid, RolePollReason, proc->backendId);
 	if (sig_result == -1)
-	{
-		*error_code = COULD_NOT_SEND_SIGNAL;
-		return InvalidOid;
-	}
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("invalid send signal")));
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	mq_receive_result = shm_mq_receive_with_timeout(mqh, &res_len, (void **) &result, 1000);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
-	{
-		*error_code = INVALID_MQ_READ;
-		return InvalidOid;
-	}
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("invalid read from message queue")));
 
 	shm_mq_detach(mq);
 
@@ -991,7 +961,7 @@ GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
 	if (proc->backendId == InvalidBackendId)
 	{
 		*error_code = NOT_BACKEND_PROCESS;
-		return InvalidOid;
+		return NIL;
 	}
 
 	mq = shm_mq_create(mq, QUEUE_SIZE);
@@ -1002,7 +972,7 @@ GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
 	if (sig_result == -1)
 	{
 		*error_code = COULD_NOT_SEND_SIGNAL;
-		return InvalidOid;
+		return NIL;
 	}
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
@@ -1010,7 +980,7 @@ GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 	{
 		*error_code = INVALID_MQ_READ;
-		return InvalidOid;
+		return NIL;
 	}
 
 	for (i = 0; i < msg->num; i++)
