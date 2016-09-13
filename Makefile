@@ -1,7 +1,7 @@
 # contrib/pg_query_state/Makefile
 
 MODULE_big = pg_query_state
-OBJS = pg_query_state.o signal_handler.o $(WIN32RES)
+OBJS = pg_query_state.o signal_handler.o userid_rpc.o $(WIN32RES)
 EXTENSION = pg_query_state
 EXTVERSION = 1.0
 DATA = $(EXTENSION)--$(EXTVERSION).sql

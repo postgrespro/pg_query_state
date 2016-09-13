@@ -16,6 +16,8 @@
 #include "nodes/pg_list.h"
 #include "storage/shm_mq.h"
 
+#define	QUEUE_SIZE			(16 * 1024)
+
 #define TIMINIG_OFF_WARNING 0b01
 #define BUFFERS_OFF_WARNING 0b10
 
@@ -65,5 +67,9 @@ extern shm_mq 	*mq;
 
 /* signal_handler.c */
 extern void SendQueryState(void);
+extern void RegisterGetRemoteBackendUserId(void);
+extern Oid GetRemoteBackendUserId(PGPROC *proc);
+extern Size grbui_EstimateShmemSize(void);
+extern void grbui_ShmemInit(void *address, bool initialized);
 
 #endif

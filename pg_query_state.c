@@ -1,6 +1,6 @@
 /*
  * pg_query_state.c
- *		Extract information about query state of other backend
+ *		Extract information about query state from other backend
  *
  * Copyright (c) 2016-2016, Postgres Professional
  *
@@ -31,7 +31,6 @@
 PG_MODULE_MAGIC;
 #endif
 
-#define	QUEUE_SIZE			(16 * 1024)
 #define	PG_QS_MODULE_KEY	0xCA94B108
 #define	PG_QUERY_STATE_KEY	0
 #define	EXECUTOR_TRACE_KEY	1
@@ -66,7 +65,6 @@ static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 /* Global variables */
 List 					*QueryDescStack = NIL;
 static ProcSignalReason QueryStatePollReason;
-static ProcSignalReason RolePollReason;
 static ProcSignalReason WorkerPollReason;
 static bool 			module_initialized = false;
 static const char		*be_state_str[] = {						/* BackendState -> string repr */
@@ -98,8 +96,6 @@ typedef struct
 	pid_t 		traceable;
 } trace_request;
 
-static void SendCurrentUserId(void);
-Oid GetRemoteBackendUserId(PGPROC *proc);
 static void SendWorkerPids(void);
 List *GetRemoteBackendWorkers(PGPROC *proc, int *error_code);
 
@@ -108,6 +104,7 @@ shm_toc			*toc = NULL;
 pg_qs_params   	*params = NULL;
 trace_request	*trace_req = NULL;
 shm_mq 			*mq = NULL;
+void			*grbui_shm = NULL;
 
 /*
  * Estimate amount of shared memory needed.
@@ -121,11 +118,12 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 3;
+	nkeys = 4;
 
 	shm_toc_estimate_chunk(&e, sizeof(trace_request));
 	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
+	shm_toc_estimate_chunk(&e, grbui_EstimateShmemSize());
 
 	shm_toc_estimate_keys(&e, nkeys);
 	size = shm_toc_estimate(&e);
@@ -156,6 +154,8 @@ pg_qs_shmem_startup(void)
 		MemSet(trace_req, 0, sizeof(trace_request));
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
 		shm_toc_insert(toc, num_toc++, mq);
+		grbui_shm = shm_toc_allocate(toc, grbui_EstimateShmemSize());
+		shm_toc_insert(toc, num_toc++, grbui_shm);
 	}
 	else
 	{
@@ -164,7 +164,9 @@ pg_qs_shmem_startup(void)
 		params = shm_toc_lookup(toc, num_toc++);
 		trace_req = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
+		grbui_shm = shm_toc_lookup(toc, num_toc++);
 	}
+	grbui_ShmemInit(grbui_shm, found);
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
@@ -186,14 +188,13 @@ _PG_init(void)
 	 * the postmaster process.)  We'll allocate or attach to the shared
 	 * resources in qs_shmem_startup().
 	 */
-	RequestAddinShmemSpace(QUEUE_SIZE);
+	RequestAddinShmemSpace(pg_qs_shmem_size());
 
 	/* Register interrupt on custom signal of polling query state */
+	RegisterGetRemoteBackendUserId();
 	QueryStatePollReason = RegisterCustomProcSignalHandler(SendQueryState);
-	RolePollReason = RegisterCustomProcSignalHandler(SendCurrentUserId);
 	WorkerPollReason = RegisterCustomProcSignalHandler(SendWorkerPids);
-	if (QueryStatePollReason == INVALID_PROCSIGNAL || RolePollReason == INVALID_PROCSIGNAL
-		|| WorkerPollReason == INVALID_PROCSIGNAL)
+	if (QueryStatePollReason == INVALID_PROCSIGNAL || WorkerPollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
@@ -802,85 +803,6 @@ executor_continue(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-static shm_mq_result
-shm_mq_receive_with_timeout(shm_mq_handle *mqh, Size *nbytesp, void **datap, long timeout)
-{
-
-#ifdef HAVE_INT64_TIMESTAMP
-#define GetNowFloat()	((float8) GetCurrentTimestamp() / 1000.0)
-#else
-#define GetNowFloat()	1000.0 * GetCurrentTimestamp()
-#endif
-
-	float8 	endtime = GetNowFloat() + timeout;
-	int 	rc = 0;
-
-	for (;;)
-	{
-		long 		delay;
-		shm_mq_result mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
-
-		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
-			return mq_receive_result;
-
-		if (rc & WL_TIMEOUT)
-			return SHM_MQ_WOULD_BLOCK;
-
-		delay = (long) (endtime - GetNowFloat());
-		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
-		CHECK_FOR_INTERRUPTS();
-		ResetLatch(MyLatch);
-	}
-}
-
-static void
-SendCurrentUserId(void)
-{
-	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
-	Oid 			user_oid = GetUserId();
-
-	shm_mq_send(mqh, sizeof(Oid), &user_oid, false);
-}
-
-#define NOT_BACKEND_PROCESS		1
-#define COULD_NOT_SEND_SIGNAL 	2
-#define INVALID_MQ_READ			3
-
-/*
- * Extract effective user id of external backend session
- * 		Assume `proc` is valid backend and doesn't point to current process
- */
-Oid
-GetRemoteBackendUserId(PGPROC *proc)
-{
-	int			sig_result;
-	shm_mq_handle	*mqh;
-	shm_mq_result 	mq_receive_result;
-	Oid			*result;
-	Size		res_len;
-
-	Assert(proc && proc != MyProc && proc->backendId != InvalidBackendId);
-
-	mq = shm_mq_create(mq, QUEUE_SIZE);
-	shm_mq_set_sender(mq, proc);
-	shm_mq_set_receiver(mq, MyProc);
-
-	sig_result = SendProcSignal(proc->pid, RolePollReason, proc->backendId);
-	if (sig_result == -1)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("invalid send signal")));
-
-	mqh = shm_mq_attach(mq, NULL, NULL);
-	mq_receive_result = shm_mq_receive_with_timeout(mqh, &res_len, (void **) &result, 1000);
-	if (mq_receive_result != SHM_MQ_SUCCESS)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("invalid read from message queue")));
-
-	shm_mq_detach(mq);
-
-	return *result;
-}
-
 static bool
 extract_worker_handles(PlanState *node, List **result)
 {
@@ -947,46 +869,43 @@ SendWorkerPids(void)
 	shm_mq_send(mqh, msg_len, msg, false);
 }
 
-List *
-GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
-{
-	int				sig_result;
-	shm_mq_handle	*mqh;
-	shm_mq_result 	mq_receive_result;
-	workers_msg		*msg;
-	Size			msg_len;
-	int				i;
-	List			*result = NIL;
+// List *
+// GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
+// {
+	// int				sig_result;
+	// shm_mq_handle	*mqh;
+	// shm_mq_result 	mq_receive_result;
+	// workers_msg		*msg;
+	// Size			msg_len;
+	// int				i;
+	// List			*result = NIL;
 
-	if (proc->backendId == InvalidBackendId)
-	{
-		*error_code = NOT_BACKEND_PROCESS;
-		return NIL;
-	}
+	// if (proc->backendId == InvalidBackendId)
+	// {
+		// return NIL;
+	// }
 
-	mq = shm_mq_create(mq, QUEUE_SIZE);
-	shm_mq_set_sender(mq, proc);
-	shm_mq_set_receiver(mq, MyProc);
+	// mq = shm_mq_create(mq, QUEUE_SIZE);
+	// shm_mq_set_sender(mq, proc);
+	// shm_mq_set_receiver(mq, MyProc);
 
-	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
-	if (sig_result == -1)
-	{
-		*error_code = COULD_NOT_SEND_SIGNAL;
-		return NIL;
-	}
+	// sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
+	// if (sig_result == -1)
+	// {
+		// return NIL;
+	// }
 
-	mqh = shm_mq_attach(mq, NULL, NULL);
-	mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
-	if (mq_receive_result != SHM_MQ_SUCCESS)
-	{
-		*error_code = INVALID_MQ_READ;
-		return NIL;
-	}
+	// mqh = shm_mq_attach(mq, NULL, NULL);
+	// mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
+	// if (mq_receive_result != SHM_MQ_SUCCESS)
+	// {
+		// return NIL;
+	// }
 
-	for (i = 0; i < msg->num; i++)
-		result = lcons_int(msg->pids[i], result);
+	// for (i = 0; i < msg->num; i++)
+		// result = lcons_int(msg->pids[i], result);
 
-	shm_mq_detach(mq);
+	// shm_mq_detach(mq);
 
-	return result;
-}
+	// return result;
+// }
