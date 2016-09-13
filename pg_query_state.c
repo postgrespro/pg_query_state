@@ -177,7 +177,7 @@ _PG_init(void)
 	 * the postmaster process.)  We'll allocate or attach to the shared
 	 * resources in qs_shmem_startup().
 	 */
-	RequestAddinShmemSpace(QUEUE_SIZE);
+	RequestAddinShmemSpace(pg_qs_shmem_size());
 
 	/* Register interrupt on custom signal of polling query state */
 	QueryStatePollReason = RegisterCustomProcSignalHandler(SendQueryState);

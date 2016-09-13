@@ -16,8 +16,8 @@
 #include "nodes/pg_list.h"
 #include "storage/shm_mq.h"
 
-#define TIMINIG_OFF_WARNING 0b01
-#define BUFFERS_OFF_WARNING 0b10
+#define TIMINIG_OFF_WARNING 1
+#define BUFFERS_OFF_WARNING 2
 
 /*
  * Result status on query state request from asked backend
