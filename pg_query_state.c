@@ -118,12 +118,11 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 4;
+	nkeys = 3;
 
 	shm_toc_estimate_chunk(&e, sizeof(trace_request));
 	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
-	shm_toc_estimate_chunk(&e, grbui_EstimateShmemSize());
 
 	shm_toc_estimate_keys(&e, nkeys);
 	size = shm_toc_estimate(&e);
@@ -154,8 +153,6 @@ pg_qs_shmem_startup(void)
 		MemSet(trace_req, 0, sizeof(trace_request));
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
 		shm_toc_insert(toc, num_toc++, mq);
-		grbui_shm = shm_toc_allocate(toc, grbui_EstimateShmemSize());
-		shm_toc_insert(toc, num_toc++, grbui_shm);
 	}
 	else
 	{
@@ -164,9 +161,9 @@ pg_qs_shmem_startup(void)
 		params = shm_toc_lookup(toc, num_toc++);
 		trace_req = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
-		grbui_shm = shm_toc_lookup(toc, num_toc++);
 	}
-	grbui_ShmemInit(grbui_shm, found);
+
+	uirpcShmemInit();
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
@@ -188,7 +185,7 @@ _PG_init(void)
 	 * the postmaster process.)  We'll allocate or attach to the shared
 	 * resources in qs_shmem_startup().
 	 */
-	RequestAddinShmemSpace(pg_qs_shmem_size());
+	RequestAddinShmemSpace(pg_qs_shmem_size() + uirpcEstimateShmemSize());
 
 	/* Register interrupt on custom signal of polling query state */
 	RegisterGetRemoteBackendUserId();
@@ -583,6 +580,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
 
+		counterpart_user_id = GetRemoteBackendUserId(proc);
+		if (!(superuser() || GetUserId() == counterpart_user_id))
+			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+							errmsg("permission denied")));
+
 		if (TEXT_CSTR_CMP(format_text, "text") == 0)
 			format = EXPLAIN_FORMAT_TEXT;
 		else if (TEXT_CSTR_CMP(format_text, "xml") == 0)
@@ -600,11 +602,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 		 */
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
-
-		counterpart_user_id = GetRemoteBackendUserId(proc);
-		if (!(superuser() || GetUserId() == counterpart_user_id))
-			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-							errmsg("permission denied")));
 
 		/* fill in parameters of query state request */
 		params->verbose = verbose;

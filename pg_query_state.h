@@ -69,7 +69,7 @@ extern shm_mq 	*mq;
 extern void SendQueryState(void);
 extern void RegisterGetRemoteBackendUserId(void);
 extern Oid GetRemoteBackendUserId(PGPROC *proc);
-extern Size grbui_EstimateShmemSize(void);
-extern void grbui_ShmemInit(void *address, bool initialized);
+extern Size uirpcEstimateShmemSize(void);
+extern void uirpcShmemInit(void);
 
 #endif

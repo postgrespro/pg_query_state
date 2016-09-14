@@ -9,10 +9,15 @@
 #define QUEUE_SIZE		(shm_mq_minimum_size + sizeof(Oid))
 
 /* shared objects */
-static shm_mq *mq = NULL;
+typedef struct
+{
+	LWLock 	*lock;
+	Oid		 userid;
+} uirpcFuncResult;
+static uirpcFuncResult *resptr = NULL;
 
 /* global variables */
-static ProcSignalReason UserPollReason;
+static ProcSignalReason UserPollReason = INVALID_PROCSIGNAL;
 
 /*
  * Receive a message from a shared message queue until timeout is exceeded.
@@ -57,9 +62,9 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh, Size *nbytesp, void **datap,
  * Returns estimated size of shared memory needed for `GetRemoteBackendUserId`.
  */
 Size
-grbui_EstimateShmemSize()
+uirpcEstimateShmemSize()
 {
-	return QUEUE_SIZE;
+	return MAXALIGN(sizeof(uirpcFuncResult));
 }
 
 /*
@@ -69,22 +74,28 @@ grbui_EstimateShmemSize()
  * Flag `initialized` specifies the case when shmem is already initialized.
  */
 void
-grbui_ShmemInit(void *address, bool initialized)
+uirpcShmemInit()
 {
-	mq = address;
+	bool found;
+
+	resptr = ShmemInitStruct("userid_rpc",
+							sizeof(uirpcFuncResult),
+							&found);
+	if (!found)
+		/* First time through ... */
+		resptr->lock = &(GetNamedLWLockTranche("userid_rpc"))->lock;
+	resptr->userid = InvalidOid;
 }
 
 static void
 SendCurrentUserId(void)
 {
-	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
-	Oid 			user_oid = GetUserId();
-
-	shm_mq_send(mqh, sizeof(Oid), &user_oid, false);
+	LWLockUpdateVar(resptr->lock, (uint64 *) &resptr->userid, GetUserId());
 }
 
 /*
- * Register `GetRemoteBackendUserId` function as RPC
+ * Register `GetRemoteBackendUserId` function as RPC and request necessary
+ * 		locks.
  */
 void
 RegisterGetRemoteBackendUserId()
@@ -93,42 +104,41 @@ RegisterGetRemoteBackendUserId()
 	if (UserPollReason == INVALID_PROCSIGNAL)
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
+
+	RequestNamedLWLockTranche("userid_rpc", 1);
 }
 
 /*
  * Extract effective user id from external backend session specified by `proc`.
  *
+ * This function must be called after `UserPollReason` register and
+ * initialization specialized structures in shared memory.
  * Assume `proc` is valid backend and doesn't point to current process.
  */
 Oid
 GetRemoteBackendUserId(PGPROC *proc)
 {
-	int			sig_result;
-	shm_mq_handle	*mqh;
-	shm_mq_result 	mq_receive_result;
-	Oid			*result;
-	Size		res_len;
+	int	sig_result;
+	Oid	result = InvalidOid;
 
+	Assert(UserPollReason != INVALID_PROCSIGNAL);
+	Assert(resptr != NULL);
 	Assert(proc && proc != MyProc && proc->backendId != InvalidBackendId);
 
-	mq = shm_mq_create(mq, QUEUE_SIZE);
-	shm_mq_set_sender(mq, proc);
-	shm_mq_set_receiver(mq, MyProc);
+	LWLockAcquire(resptr->lock, LW_EXCLUSIVE);
 
 	sig_result = SendProcSignal(proc->pid, UserPollReason, proc->backendId);
 	if (sig_result == -1)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("invalid send signal")));
 
-	mqh = shm_mq_attach(mq, NULL, NULL);
-	mq_receive_result = shm_mq_receive_with_timeout(mqh,
-													&res_len, 
-													(void **) &result,
-													TIMEOUT_MSEC);
-	if (mq_receive_result != SHM_MQ_SUCCESS)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("invalid read from message queue")));
-	shm_mq_detach(mq);
+	while (result == InvalidOid)
+		LWLockWaitForVar(resptr->lock,
+						 (uint64 *) &resptr->userid,
+						 result,
+						 (uint64 *) &result);
 
-	return *result;
+	LWLockRelease(resptr->lock);
+
+	return result;
 }
