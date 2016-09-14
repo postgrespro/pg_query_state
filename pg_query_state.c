@@ -17,6 +17,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/ipc.h"
+#include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/shm_toc.h"
 #include "utils/guc.h"
@@ -267,27 +268,6 @@ _PG_fini(void)
 }
 
 /*
- * Find PGPROC entry
- */
-static PGPROC *
-search_proc(int pid)
-{
-	int i;
-
-	if (pid <= 0)
-		return NULL;
-
-	for (i = 0; i < ProcGlobal->allProcCount; i++)
-	{
-		PGPROC	*proc = &ProcGlobal->allProcs[i];
-		if (proc->pid == pid)
-			return proc;
-	}
-
-	return NULL;
-}
-
-/*
  * In trace mode suspend query execution until other backend resumes it
  */
 static void
@@ -298,7 +278,7 @@ suspend_traceable_query()
 		/* Check whether current backend is traced */
 		if (MyProcPid == trace_req->traceable)
 		{
-			PGPROC *tracer = search_proc(trace_req->tracer);
+			PGPROC *tracer = BackendPidGetProc(trace_req->tracer);
 
 			Assert(tracer != NULL);
 
@@ -583,7 +563,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("attempt to extract state of current process")));
 
-		proc = search_proc(pid);
+		proc = BackendPidGetProc(pid);
 		if (!proc || proc->backendId == InvalidBackendId)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
@@ -743,7 +723,7 @@ exec_trace_cmd(pid_t pid, trace_cmd cmd)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("attempt to trace self process")));
 
-	proc = search_proc(pid);
+	proc = BackendPidGetProc(pid);
 	if (!proc || proc->backendId == InvalidBackendId)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("backend with pid=%d not found", pid)));
