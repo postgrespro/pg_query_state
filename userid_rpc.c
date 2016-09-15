@@ -90,7 +90,9 @@ uirpcShmemInit()
 static void
 SendCurrentUserId(void)
 {
+	LWLockAcquire(resptr->lock, LW_EXCLUSIVE);
 	LWLockUpdateVar(resptr->lock, (uint64 *) &resptr->userid, GetUserId());
+	LWLockRelease(resptr->lock);
 }
 
 /*
@@ -125,8 +127,6 @@ GetRemoteBackendUserId(PGPROC *proc)
 	Assert(resptr != NULL);
 	Assert(proc && proc != MyProc && proc->backendId != InvalidBackendId);
 
-	LWLockAcquire(resptr->lock, LW_EXCLUSIVE);
-
 	sig_result = SendProcSignal(proc->pid, UserPollReason, proc->backendId);
 	if (sig_result == -1)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -137,8 +137,6 @@ GetRemoteBackendUserId(PGPROC *proc)
 						 (uint64 *) &resptr->userid,
 						 result,
 						 (uint64 *) &result);
-
-	LWLockRelease(resptr->lock);
 
 	return result;
 }
