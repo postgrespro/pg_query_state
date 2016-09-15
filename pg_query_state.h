@@ -18,8 +18,8 @@
 
 #define	QUEUE_SIZE			(16 * 1024)
 
-#define TIMINIG_OFF_WARNING 0b01
-#define BUFFERS_OFF_WARNING 0b10
+#define TIMINIG_OFF_WARNING 1
+#define BUFFERS_OFF_WARNING 2
 
 /*
  * Result status on query state request from asked backend
@@ -67,9 +67,5 @@ extern shm_mq 	*mq;
 
 /* signal_handler.c */
 extern void SendQueryState(void);
-extern void RegisterGetRemoteBackendUserId(void);
-extern Oid GetRemoteBackendUserId(PGPROC *proc);
-extern Size uirpcEstimateShmemSize(void);
-extern void uirpcShmemInit(void);
 
 #endif

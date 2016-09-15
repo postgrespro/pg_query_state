@@ -21,6 +21,8 @@
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
+#include "storage/s_lock.h"
+#include "storage/spin.h"
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/shm_toc.h"
@@ -64,6 +66,7 @@ static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
+static ProcSignalReason UserIdPollReason;
 static ProcSignalReason QueryStatePollReason;
 static ProcSignalReason WorkerPollReason;
 static bool 			module_initialized = false;
@@ -76,6 +79,13 @@ static const char		*be_state_str[] = {						/* BackendState -> string repr */
 							"idle in transaction (aborted)",	/* STATE_IDLEINTRANSACTION_ABORTED */
 							"disabled",							/* STATE_DISABLED */
 						};
+
+typedef struct
+{
+	slock_t	 mutex;		/* protect concurrent access to `userid` */
+	Oid		 userid;
+	Latch	*caller;
+} RemoteUserIdResult;
 
 /*
  * Kinds of trace commands
@@ -96,15 +106,17 @@ typedef struct
 	pid_t 		traceable;
 } trace_request;
 
+static void SendCurrentUserId(void);
 static void SendWorkerPids(void);
-List *GetRemoteBackendWorkers(PGPROC *proc, int *error_code);
+static Oid GetRemoteBackendUserId(PGPROC *proc);
+static List *GetRemoteBackendWorkers(PGPROC *proc, int *error_code);
 
 /* Shared memory variables */
 shm_toc			*toc = NULL;
+RemoteUserIdResult *counterpart_userid = NULL;
 pg_qs_params   	*params = NULL;
 trace_request	*trace_req = NULL;
 shm_mq 			*mq = NULL;
-void			*grbui_shm = NULL;
 
 /*
  * Estimate amount of shared memory needed.
@@ -118,8 +130,9 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 3;
+	nkeys = 4;
 
+	shm_toc_estimate_chunk(&e, sizeof(RemoteUserIdResult));
 	shm_toc_estimate_chunk(&e, sizeof(trace_request));
 	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
@@ -146,11 +159,17 @@ pg_qs_shmem_startup(void)
 	{
 		toc = shm_toc_create(PG_QS_MODULE_KEY, shmem, shmem_size);
 
+		counterpart_userid = shm_toc_allocate(toc, sizeof(RemoteUserIdResult));
+		shm_toc_insert(toc, num_toc++, counterpart_userid);
+		SpinLockInit(&counterpart_userid->mutex);
+
 		params = shm_toc_allocate(toc, sizeof(pg_qs_params));
 		shm_toc_insert(toc, num_toc++, params);
+
 		trace_req = shm_toc_allocate(toc, sizeof(trace_request));
 		shm_toc_insert(toc, num_toc++, trace_req);
 		MemSet(trace_req, 0, sizeof(trace_request));
+
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
 		shm_toc_insert(toc, num_toc++, mq);
 	}
@@ -158,12 +177,11 @@ pg_qs_shmem_startup(void)
 	{
 		toc = shm_toc_attach(PG_QS_MODULE_KEY, shmem);
 
+		counterpart_userid = shm_toc_lookup(toc, num_toc++);
 		params = shm_toc_lookup(toc, num_toc++);
 		trace_req = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
 	}
-
-	uirpcShmemInit();
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
@@ -185,13 +203,15 @@ _PG_init(void)
 	 * the postmaster process.)  We'll allocate or attach to the shared
 	 * resources in qs_shmem_startup().
 	 */
-	RequestAddinShmemSpace(pg_qs_shmem_size() + uirpcEstimateShmemSize());
+	RequestAddinShmemSpace(pg_qs_shmem_size());
 
 	/* Register interrupt on custom signal of polling query state */
-	RegisterGetRemoteBackendUserId();
+	UserIdPollReason = RegisterCustomProcSignalHandler(SendCurrentUserId);
 	QueryStatePollReason = RegisterCustomProcSignalHandler(SendQueryState);
 	WorkerPollReason = RegisterCustomProcSignalHandler(SendWorkerPids);
-	if (QueryStatePollReason == INVALID_PROCSIGNAL || WorkerPollReason == INVALID_PROCSIGNAL)
+	if (QueryStatePollReason == INVALID_PROCSIGNAL
+		|| WorkerPollReason == INVALID_PROCSIGNAL
+		|| UserIdPollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
@@ -580,11 +600,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
 
-		counterpart_user_id = GetRemoteBackendUserId(proc);
-		if (!(superuser() || GetUserId() == counterpart_user_id))
-			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-							errmsg("permission denied")));
-
 		if (TEXT_CSTR_CMP(format_text, "text") == 0)
 			format = EXPLAIN_FORMAT_TEXT;
 		else if (TEXT_CSTR_CMP(format_text, "xml") == 0)
@@ -602,6 +617,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 		 */
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
+
+		counterpart_user_id = GetRemoteBackendUserId(proc);
+		if (!(superuser() || GetUserId() == counterpart_user_id))
+			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+							errmsg("permission denied")));
 
 		/* fill in parameters of query state request */
 		params->verbose = verbose;
@@ -800,6 +820,50 @@ executor_continue(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+static void
+SendCurrentUserId(void)
+{
+	SpinLockAcquire(&counterpart_userid->mutex);
+	counterpart_userid->userid = GetUserId();
+	SpinLockRelease(&counterpart_userid->mutex);
+
+	SetLatch(counterpart_userid->caller);
+}
+
+/*
+ * Extract effective user id from backend on which `proc` points.
+ *
+ * Assume the `proc` points on valid backend and it's not current process.
+ *
+ * This fuction must be called after registeration of `UserIdPollReason` and
+ * initialization `RemoteUserIdResult` object in shared memory.
+ */
+static Oid
+GetRemoteBackendUserId(PGPROC *proc)
+{
+	Oid result;
+
+	counterpart_userid->userid = InvalidOid;
+	counterpart_userid->caller = MyLatch;
+
+	SendProcSignal(proc->pid, UserIdPollReason, proc->backendId);
+	for (;;)
+	{
+		SpinLockAcquire(&counterpart_userid->mutex);
+		result = counterpart_userid->userid;
+		SpinLockRelease(&counterpart_userid->mutex);
+
+		if (result != InvalidOid)
+			break;
+
+		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		CHECK_FOR_INTERRUPTS();
+		ResetLatch(MyLatch);
+	}
+
+	return result;
+}
+
 static bool
 extract_worker_handles(PlanState *node, List **result)
 {
@@ -866,43 +930,45 @@ SendWorkerPids(void)
 	shm_mq_send(mqh, msg_len, msg, false);
 }
 
-// List *
-// GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
-// {
-	// int				sig_result;
-	// shm_mq_handle	*mqh;
-	// shm_mq_result 	mq_receive_result;
-	// workers_msg		*msg;
-	// Size			msg_len;
-	// int				i;
-	// List			*result = NIL;
+/*
+List *
+GetRemoteBackendWorkers(PGPROC *proc, int *error_code)
+{
+	int				sig_result;
+	shm_mq_handle	*mqh;
+	shm_mq_result 	mq_receive_result;
+	workers_msg		*msg;
+	Size			msg_len;
+	int				i;
+	List			*result = NIL;
 
-	// if (proc->backendId == InvalidBackendId)
-	// {
-		// return NIL;
-	// }
+	if (proc->backendId == InvalidBackendId)
+	{
+		return NIL;
+	}
 
-	// mq = shm_mq_create(mq, QUEUE_SIZE);
-	// shm_mq_set_sender(mq, proc);
-	// shm_mq_set_receiver(mq, MyProc);
+	mq = shm_mq_create(mq, QUEUE_SIZE);
+	shm_mq_set_sender(mq, proc);
+	shm_mq_set_receiver(mq, MyProc);
 
-	// sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
-	// if (sig_result == -1)
-	// {
-		// return NIL;
-	// }
+	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
+	if (sig_result == -1)
+	{
+		return NIL;
+	}
 
-	// mqh = shm_mq_attach(mq, NULL, NULL);
-	// mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
-	// if (mq_receive_result != SHM_MQ_SUCCESS)
-	// {
-		// return NIL;
-	// }
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+	{
+		return NIL;
+	}
 
-	// for (i = 0; i < msg->num; i++)
-		// result = lcons_int(msg->pids[i], result);
+	for (i = 0; i < msg->num; i++)
+		result = lcons_int(msg->pids[i], result);
 
-	// shm_mq_detach(mq);
+	shm_mq_detach(mq);
 
-	// return result;
-// }
+	return result;
+}
+*/
