@@ -158,7 +158,7 @@ SendQueryState(void)
 	/* check if module is enabled */
 	if (!pg_qs_enable)
 	{
-		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, STAT_DISABLED };
+		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -166,7 +166,7 @@ SendQueryState(void)
 	/* check if backend doesn't execute any query */
 	else if (list_length(QueryDescStack) == 0)
 	{
-		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, QUERY_NOT_RUNNING };
+		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -179,6 +179,7 @@ SendQueryState(void)
 		shm_mq_msg		*msg = palloc(msglen);
 
 		msg->length = msglen;
+		msg->proc = MyProc;
 		msg->result_code = QS_RETURNED;
 
 		msg->warnings = 0;

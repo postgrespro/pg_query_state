@@ -37,6 +37,7 @@ typedef enum
 typedef struct
 {
 	int		length;							/* size of message record, for sanity check */
+	PGPROC	*proc;
 	PG_QS_RequestResult	result_code;
 	int		warnings;						/* bitmap of warnings */
 	int		stack_depth;

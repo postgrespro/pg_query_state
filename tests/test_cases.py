@@ -152,6 +152,7 @@ def test_concurrent_access(config):
 	acurs1, acurs2, acurs3 = acon1.cursor(), acon2.cursor(), acon3.cursor()
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 
+	set_guc(acon3, 'max_parallel_workers_per_gather', 0)
 	acurs3.execute(query)
 	time.sleep(0.1)
 	acurs1.callproc('pg_query_state', (acon3.get_backend_pid(),))
