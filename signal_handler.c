@@ -153,7 +153,20 @@ serialize_stack(char *dest, List *qs_stack)
 void
 SendQueryState(void)
 {
-	shm_mq_handle 	*mqh = shm_mq_attach(mq, NULL, NULL);
+	shm_mq_handle 	*mqh;
+
+	/* wait until caller sets this process as sender to message queue */
+	for (;;)
+	{
+		if (shm_mq_get_sender(mq) == MyProc)
+			break;
+
+		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		CHECK_FOR_INTERRUPTS();
+		ResetLatch(MyLatch);
+	}
+
+	mqh = shm_mq_attach(mq, NULL, NULL);
 
 	/* check if module is enabled */
 	if (!pg_qs_enable)

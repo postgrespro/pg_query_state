@@ -1065,7 +1065,8 @@ GetRemoteBackendQueryStates(List *procs,
 						    ExplainFormat format)
 {
 	List			*result = NIL;
-	ListCell		*i;
+	List			*alive_procs = NIL;
+	ListCell		*iter;
 
 	Assert(QueryStatePollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
@@ -1079,41 +1080,67 @@ GetRemoteBackendQueryStates(List *procs,
 	params->format = format;
 	pg_write_barrier();
 
-	foreach(i, procs)
+	/*
+	 * send signal `QueryStatePollReason` to all processes and define all alive
+	 * 		ones
+	 */
+	foreach(iter, procs)
 	{
-		PGPROC 			*proc = (PGPROC *) lfirst(i);
-		shm_mq_msg		*msg;
+		PGPROC 	*proc = (PGPROC *) lfirst(iter);
+		int		 sig_result;
+
+		sig_result = SendProcSignal(proc->pid,
+									QueryStatePollReason,
+									proc->backendId);
+		if (sig_result == -1)
+		{
+			if (errno != ESRCH)
+				goto signal_error;
+			continue;
+		}
+
+		alive_procs = lappend(alive_procs, proc);
+	}
+
+	/*
+	 * collect results from all alived processes
+	 */
+	foreach(iter, alive_procs)
+	{
+		PGPROC 			*proc = (PGPROC *) lfirst(iter);
 		shm_mq_handle  	*mqh;
 		shm_mq_result	 mq_receive_result;
-		int				 sig_result;
+		shm_mq_msg		*msg;
 		Size			 len;
-
-		Assert(proc && proc->backendId != InvalidBackendId);
 
 		/* prepare message queue to transfer data */
 		mq = shm_mq_create(mq, QUEUE_SIZE);
 		shm_mq_set_sender(mq, proc);
-		shm_mq_set_receiver(mq, MyProc);
+		shm_mq_set_receiver(mq, MyProc);	/* this function notifies the
+											   counterpart to come into data
+											   transfer */
 
-		/* send signal to specified backend to extract its state */
-		sig_result = SendProcSignal(proc->pid, QueryStatePollReason, proc->backendId);
-		if (sig_result == -1)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("invalid send signal")));
-
-		/* retrieve data from message queue */
+		/* retrieve result data from message queue */
 		mqh = shm_mq_attach(mq, NULL, NULL);
-		mq_receive_result = shm_mq_receive_with_timeout(mqh, &len, (void **) &msg, 5000);
+		mq_receive_result = shm_mq_receive_with_timeout(mqh,
+														&len,
+														(void **) &msg,
+														5000);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("invalid read from message queue")));
+			/* counterpart is died, not consider it */
+			continue;
 
+		Assert(len == msg->length);
+
+		/* aggregate result data */
 		result = lappend(result, copy_msg(msg));
 
 		shm_mq_detach(mq);
-
-		Assert(len == msg->length);
 	}
 
 	return result;
+
+signal_error:
+	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("invalid send signal")));
 }
