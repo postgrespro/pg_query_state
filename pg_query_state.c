@@ -110,6 +110,14 @@ static void SendCurrentUserId(void);
 static void SendBgWorkerPids(void);
 static Oid GetRemoteBackendUserId(PGPROC *proc);
 static List *GetRemoteBackendWorkers(PGPROC *proc);
+static shm_mq_msg *GetRemoteBackendQueryState(PGPROC *proc,
+											  List *parallel_workers,
+											  bool verbose,
+											  bool costs,
+											  bool timing,
+											  bool buffers,
+											  bool triggers,
+											  ExplainFormat format);
 
 /* Shared memory variables */
 shm_toc			*toc = NULL;
@@ -581,12 +589,8 @@ pg_query_state(PG_FUNCTION_ARGS)
 		ExplainFormat	 format;
 		PGPROC			*proc;
 		Oid				 counterpart_user_id;
-		shm_mq_handle  	*mqh;
-		shm_mq_result	 mq_receive_result;
-		int				 send_signal_result;
-		Size			 len;
 		shm_mq_msg		*msg;
-		List			*bg_worker_pids = NIL;
+		List			*bg_worker_procs = NIL;
 
 		if (!module_initialized)
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -624,36 +628,16 @@ pg_query_state(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 							errmsg("permission denied")));
 
-		/* fill in parameters of query state request */
-		params->verbose = verbose;
-		params->costs = costs;
-		params->timing = timing;
-		params->buffers = buffers;
-		params->triggers = triggers;
-		params->format = format;
+		bg_worker_procs = GetRemoteBackendWorkers(proc);
 
-		bg_worker_pids = GetRemoteBackendWorkers(proc);
-
-		/* prepare message queue to transfer data */
-		mq = shm_mq_create(mq, QUEUE_SIZE);
-		shm_mq_set_sender(mq, proc);
-		shm_mq_set_receiver(mq, MyProc);
-
-		/* send signal to specified backend to extract its state */
-		send_signal_result = SendProcSignal(pid, QueryStatePollReason, proc->backendId);
-		if (send_signal_result == -1)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-							errmsg("invalid send signal")));
-
-		/* retrieve data from message queue */
-		mqh = shm_mq_attach(mq, NULL, NULL);
-		mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
-		if (mq_receive_result != SHM_MQ_SUCCESS)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-							errmsg("invalid read from message queue")));
-		shm_mq_detach(mq);
-
-		Assert(len == msg->length);
+		msg = GetRemoteBackendQueryState(proc,
+										 bg_worker_procs,
+										 verbose,
+										 costs,
+										 timing,
+										 buffers,
+										 triggers,
+										 format);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		switch (msg->result_code)
@@ -989,9 +973,9 @@ SendBgWorkerPids(void)
 }
 
 /*
- * Extracts all parallel worker pids running by process `proc`
+ * Extracts all parallel worker `proc`s running by process `proc`
  */
-List *
+static List *
 GetRemoteBackendWorkers(PGPROC *proc)
 {
 	int				 sig_result;
@@ -1020,9 +1004,67 @@ GetRemoteBackendWorkers(PGPROC *proc)
 		return NIL;
 
 	for (i = 0; i < msg->number; i++)
-		result = lcons_int(msg->pids[i], result);
+	{
+		pid_t 	 pid = msg->pids[i];
+		PGPROC	*proc = BackendPidGetProc(pid);
+
+		result = lcons(proc, result);
+	}
 
 	shm_mq_detach(mq);
 
 	return result;
+}
+
+static shm_mq_msg *
+GetRemoteBackendQueryState(PGPROC *proc,
+						   List	*parallel_workers,
+						   bool verbose,
+						   bool costs,
+						   bool timing,
+						   bool buffers,
+						   bool triggers,
+						   ExplainFormat format)
+{
+	shm_mq_msg		*msg;
+	shm_mq_handle  	*mqh;
+	shm_mq_result	 mq_receive_result;
+	int				 sig_result;
+	Size			 len;
+
+	Assert(proc && proc->backendId != InvalidBackendId);
+	Assert(QueryStatePollReason != INVALID_PROCSIGNAL);
+	Assert(mq);
+
+	/* fill in parameters of query state request */
+	params->verbose = verbose;
+	params->costs = costs;
+	params->timing = timing;
+	params->buffers = buffers;
+	params->triggers = triggers;
+	params->format = format;
+	pg_write_barrier();
+
+	/* prepare message queue to transfer data */
+	mq = shm_mq_create(mq, QUEUE_SIZE);
+	shm_mq_set_sender(mq, proc);
+	shm_mq_set_receiver(mq, MyProc);
+
+	/* send signal to specified backend to extract its state */
+	sig_result = SendProcSignal(proc->pid, QueryStatePollReason, proc->backendId);
+	if (sig_result == -1)
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("invalid send signal")));
+
+	/* retrieve data from message queue */
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	mq_receive_result = shm_mq_receive_with_timeout(mqh, &len, (void **) &msg, 5000);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("invalid read from message queue")));
+	shm_mq_detach(mq);
+
+	Assert(len == msg->length);
+
+	return msg;
 }
