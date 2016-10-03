@@ -15,11 +15,3 @@ CREATE FUNCTION pg_query_state(pid 		integer
 				 , leader_pid integer)
 	AS 'MODULE_PATHNAME'
 	LANGUAGE C STRICT VOLATILE;
-
-CREATE FUNCTION executor_step(pid integer) RETURNS VOID
-	AS 'MODULE_PATHNAME'
-	LANGUAGE C VOLATILE;
-
-CREATE FUNCTION executor_continue(pid integer) RETURNS VOID
-	AS 'MODULE_PATHNAME'
-	LANGUAGE C VOLATILE;

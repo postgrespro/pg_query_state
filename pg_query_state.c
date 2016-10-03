@@ -35,7 +35,6 @@ PG_MODULE_MAGIC;
 
 #define	PG_QS_MODULE_KEY	0xCA94B108
 #define	PG_QUERY_STATE_KEY	0
-#define	EXECUTOR_TRACE_KEY	1
 
 #define TEXT_CSTR_CMP(text, cstr) \
 	(memcmp(VARDATA(text), (cstr), VARSIZE(text) - VARHDRSZ))
@@ -44,7 +43,6 @@ PG_MODULE_MAGIC;
 bool pg_qs_enable = true;
 bool pg_qs_timing = false;
 bool pg_qs_buffers = false;
-bool pg_qs_trace = false;
 
 /* Saved hook values in case of unload */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
@@ -52,7 +50,6 @@ static ExecutorRun_hook_type prev_ExecutorRun = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
-static PostExecProcNode_hook_type prev_postExecProcNode = NULL;
 
 void		_PG_init(void);
 void		_PG_fini(void);
@@ -62,7 +59,6 @@ static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 static void qs_ExecutorEnd(QueryDesc *queryDesc);
-static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
@@ -87,25 +83,6 @@ typedef struct
 	Latch	*caller;
 } RemoteUserIdResult;
 
-/*
- * Kinds of trace commands
- */
-typedef enum
-{
-	STEP,
-	CONTINUE
-} trace_cmd;
-
-/*
- * Trace command transmitted to counterpart
- */
-typedef struct
-{
-	trace_cmd	command;
-	pid_t 		tracer;
-	pid_t 		traceable;
-} trace_request;
-
 static void SendCurrentUserId(void);
 static void SendBgWorkerPids(void);
 static Oid GetRemoteBackendUserId(PGPROC *proc);
@@ -122,7 +99,6 @@ static List *GetRemoteBackendQueryStates(List *procs,
 shm_toc			*toc = NULL;
 RemoteUserIdResult *counterpart_userid = NULL;
 pg_qs_params   	*params = NULL;
-trace_request	*trace_req = NULL;
 shm_mq 			*mq = NULL;
 
 /*
@@ -137,10 +113,9 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 4;
+	nkeys = 3;
 
 	shm_toc_estimate_chunk(&e, sizeof(RemoteUserIdResult));
-	shm_toc_estimate_chunk(&e, sizeof(trace_request));
 	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
 
@@ -173,10 +148,6 @@ pg_qs_shmem_startup(void)
 		params = shm_toc_allocate(toc, sizeof(pg_qs_params));
 		shm_toc_insert(toc, num_toc++, params);
 
-		trace_req = shm_toc_allocate(toc, sizeof(trace_request));
-		shm_toc_insert(toc, num_toc++, trace_req);
-		MemSet(trace_req, 0, sizeof(trace_request));
-
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
 		shm_toc_insert(toc, num_toc++, mq);
 	}
@@ -186,7 +157,6 @@ pg_qs_shmem_startup(void)
 
 		counterpart_userid = shm_toc_lookup(toc, num_toc++);
 		params = shm_toc_lookup(toc, num_toc++);
-		trace_req = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
 	}
 
@@ -256,16 +226,6 @@ _PG_init(void)
 							 NULL,
 							 NULL,
 							 NULL);
-	DefineCustomBoolVariable("pg_query_state.executor_trace",
-							 "Turn on trace of plan execution.",
-							 NULL,
-							 &pg_qs_trace,
-							 false,
-							 PGC_SUSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
 	EmitWarningsOnPlaceholders("pg_query_state");
 
 	/* Install hooks */
@@ -279,7 +239,6 @@ _PG_init(void)
 	ExecutorEnd_hook = qs_ExecutorEnd;
 	prev_shmem_startup_hook = shmem_startup_hook;
 	shmem_startup_hook = pg_qs_shmem_startup;
-	prev_postExecProcNode = postExecProcNode_hook;
 }
 
 /*
@@ -300,62 +259,6 @@ _PG_fini(void)
 	ExecutorFinish_hook = prev_ExecutorFinish;
 	ExecutorEnd_hook = prev_ExecutorEnd;
 	shmem_startup_hook = prev_shmem_startup_hook;
-	postExecProcNode_hook = prev_postExecProcNode;
-}
-
-/*
- * In trace mode suspend query execution until other backend resumes it
- */
-static void
-suspend_traceable_query()
-{
-	for (;;)
-	{
-		/* Check whether current backend is traced */
-		if (MyProcPid == trace_req->traceable)
-		{
-			PGPROC *tracer = BackendPidGetProc(trace_req->tracer);
-
-			Assert(tracer != NULL);
-
-			if (trace_req->command == CONTINUE)
-				postExecProcNode_hook = prev_postExecProcNode;
-			trace_req->traceable = 0;
-			SetLatch(&tracer->procLatch);
-			break;
-		}
-
-		/*
-		 * Wait for our latch to be set.  It might already be set for some
-		 * unrelated reason, but that'll just result in one extra trip through
-		 * the loop.  It's worth it to avoid resetting the latch at top of
-		 * loop, because setting an already-set latch is much cheaper than
-		 * setting one that has been reset.
-		 */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-
-		/* An interrupt may have occurred while we were waiting. */
-		CHECK_FOR_INTERRUPTS();
-
-		/* Reset the latch so we don't spin. */
-		ResetLatch(MyLatch);
-	}
-}
-
-/*
- * postExecProcNode_hook:
- * 		interrupt before execution next node of plan tree
- * 		until other process resumes it through function calls:
- * 			'executor_step(<pid>)'
- * 			'executor_continue(<pid>)'
- */
-static void
-qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result)
-{
-	suspend_traceable_query();
-
-	if (prev_postExecProcNode)
-		prev_postExecProcNode(planstate, result);
 }
 
 /*
@@ -385,15 +288,6 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 		/* push structure about current query in global stack */
 		QueryDescStack = lcons(queryDesc, QueryDescStack);
-
-		/* set/reset hook for trace mode before start of upper level query */
-		if (list_length(QueryDescStack) == 1)
-			postExecProcNode_hook = (pg_qs_enable && pg_qs_trace) ?
-										qs_postExecProcNode : prev_postExecProcNode;
-
-		/* suspend traceable query if it is not continued (hook is not thrown off) */
-		if (postExecProcNode_hook == qs_postExecProcNode)
-			suspend_traceable_query();
 	}
 	PG_CATCH();
 	{
@@ -759,82 +653,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 	}
 	else
 		SRF_RETURN_DONE(funcctx);
-}
-
-/*
- * Execute specific tracing command of other backend with specified 'pid'
- */
-static void
-exec_trace_cmd(pid_t pid, trace_cmd cmd)
-{
-	LOCKTAG			tag;
-	PGPROC			*proc;
-
-	if (!module_initialized)
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("pg_query_state wasn't initialized yet")));
-
-	if (pid == MyProcPid)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("attempt to trace self process")));
-
-	proc = BackendPidGetProc(pid);
-	if (!proc || proc->backendId == InvalidBackendId)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("backend with pid=%d not found", pid)));
-
-	init_lock_tag(&tag, EXECUTOR_TRACE_KEY);
-	LockAcquire(&tag, ExclusiveLock, false, false);
-
-	trace_req->tracer = MyProcPid;
-	trace_req->traceable = pid;
-	trace_req->command = cmd;
-	SetLatch(&proc->procLatch);
-
-	/*
-	 * Wait until traceable backend handles trace command (resets its pid in shared memory)
-	 * so that next 'executor_*' call can not rewrite the shared structure 'trace_req'
-	 */
-	for (;;)
-	{
-		/* Check whether traceable backend is reset its pid */
-		if (0 == trace_req->traceable)
-			break;
-
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-		CHECK_FOR_INTERRUPTS();
-		ResetLatch(MyLatch);
-	}
-
-	LockRelease(&tag, ExclusiveLock, false);
-}
-
-/*
- * Take a step in tracing of backend with specified pid
- */
-PG_FUNCTION_INFO_V1(executor_step);
-Datum
-executor_step(PG_FUNCTION_ARGS)
-{
-	pid_t pid = PG_GETARG_INT32(0);
-
-	exec_trace_cmd(pid, STEP);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Continue to execute query under tracing of backend with specified pid
- */
-PG_FUNCTION_INFO_V1(executor_continue);
-Datum
-executor_continue(PG_FUNCTION_ARGS)
-{
-	pid_t pid = PG_GETARG_INT32(0);
-
-	exec_trace_cmd(pid, CONTINUE);
-
-	PG_RETURN_VOID();
 }
 
 static void
