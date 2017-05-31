@@ -17,7 +17,9 @@ To install `pg_query_state`, please apply patches `custom_signal.patch`, `execut
 Correspondence branch names to PostgreSQL version numbers:
 - _PG9_5_ --- PostgreSQL 9.5
 - _PGPRO9_5_ --- PostgresPro 9.5
-- _master_ --- development version for PostgreSQL 10devel
+- _PGPRO9_6_ --- PostgreSQL 9.6 and PostgresPro 9.6
+- _PGPRO10_ --- PostgreSQL 10 and PostgresPro 10
+- _master_ --- development version for the newest version PostgreSQL
 
 Then execute this in the module's directory:
 ```
