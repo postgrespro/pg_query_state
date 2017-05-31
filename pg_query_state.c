@@ -58,7 +58,8 @@ void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
-static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
+static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
+						   uint64 count, bool execute_once);
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 static void qs_ExecutorEnd(QueryDesc *queryDesc);
 
@@ -305,14 +306,15 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * 		Catch any fatal signals
  */
 static void
-qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
+qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
+			   bool execute_once)
 {
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
-			prev_ExecutorRun(queryDesc, direction, count);
+			prev_ExecutorRun(queryDesc, direction, count, execute_once);
 		else
-			standard_ExecutorRun(queryDesc, direction, count);
+			standard_ExecutorRun(queryDesc, direction, count, execute_once);
 	}
 	PG_CATCH();
 	{
@@ -707,7 +709,7 @@ GetRemoteBackendUserId(PGPROC *proc)
 		if (result != InvalidOid)
 			break;
 
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
@@ -744,7 +746,8 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 		if (rc & WL_TIMEOUT || delay <= 0)
 			return SHM_MQ_WOULD_BLOCK;
 
-		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay,
+					   PG_WAIT_EXTENSION);
 
 		INSTR_TIME_SET_CURRENT(cur_time);
 		INSTR_TIME_SUBTRACT(cur_time, start_time);

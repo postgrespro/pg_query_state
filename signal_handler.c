@@ -12,6 +12,7 @@
 
 #include "commands/explain.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 
@@ -161,7 +162,7 @@ SendQueryState(void)
 		if (shm_mq_get_sender(mq) == MyProc)
 			break;
 
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_IPC);
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
