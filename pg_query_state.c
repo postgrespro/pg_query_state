@@ -159,9 +159,9 @@ pg_qs_shmem_startup(void)
 	{
 		toc = shm_toc_attach(PG_QS_MODULE_KEY, shmem);
 
-		counterpart_userid = shm_toc_lookup(toc, num_toc++);
-		params = shm_toc_lookup(toc, num_toc++);
-		mq = shm_toc_lookup(toc, num_toc++);
+		counterpart_userid = shm_toc_lookup(toc, num_toc++, false);
+		params = shm_toc_lookup(toc, num_toc++, false);
+		mq = shm_toc_lookup(toc, num_toc++, false);
 	}
 
 	if (prev_shmem_startup_hook)
@@ -872,7 +872,7 @@ GetRemoteBackendWorkers(PGPROC *proc)
 		result = lcons(proc, result);
 	}
 
-	shm_mq_detach(mq);
+	shm_mq_detach(mqh);
 
 	return result;
 
@@ -962,7 +962,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		goto mq_error;
 	Assert(len == msg->length);
 	result = lappend(result, copy_msg(msg));
-	shm_mq_detach(mq);
+	shm_mq_detach(mqh);
 
 	/*
 	 * collect results from all alived parallel workers
@@ -993,7 +993,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		/* aggregate result data */
 		result = lappend(result, copy_msg(msg));
 
-		shm_mq_detach(mq);
+		shm_mq_detach(mqh);
 	}
 
 	return result;
