@@ -1,8 +1,8 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index a3d6ac5318..f91a1b1422 100644
+index b9302ac..95f7da2 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -26,6 +26,7 @@
+@@ -27,6 +27,7 @@
  #include "storage/shmem.h"
  #include "storage/sinval.h"
  #include "tcop/tcopprot.h"
@@ -10,7 +10,7 @@ index a3d6ac5318..f91a1b1422 100644
  
  
  /*
-@@ -59,12 +60,17 @@ typedef struct
+@@ -60,12 +61,17 @@ typedef struct
   */
  #define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
  
@@ -28,7 +28,7 @@ index a3d6ac5318..f91a1b1422 100644
  /*
   * ProcSignalShmemSize
   *		Compute space needed for procsignal's shared memory
-@@ -165,6 +171,57 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -166,6 +172,57 @@ CleanupProcSignalState(int status, Datum arg)
  }
  
  /*
@@ -86,7 +86,7 @@ index a3d6ac5318..f91a1b1422 100644
   * SendProcSignal
   *		Send a signal to a Postgres process
   *
-@@ -259,7 +316,8 @@ CheckProcSignal(ProcSignalReason reason)
+@@ -260,7 +317,8 @@ CheckProcSignal(ProcSignalReason reason)
  void
  procsignal_sigusr1_handler(SIGNAL_ARGS)
  {
@@ -96,7 +96,7 @@ index a3d6ac5318..f91a1b1422 100644
  
  	if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
  		HandleCatchupInterrupt();
-@@ -288,9 +346,87 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -292,9 +350,87 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -185,10 +185,10 @@ index a3d6ac5318..f91a1b1422 100644
 +	RESUME_INTERRUPTS();
 +}
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index f6be98bdd4..5fee511676 100644
+index 63a1994..0dfad33 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -3005,6 +3005,8 @@ ProcessInterrupts(void)
+@@ -3012,6 +3012,8 @@ ProcessInterrupts(void)
  
  	if (ParallelMessagePending)
  		HandleParallelMessages();
@@ -198,7 +198,7 @@ index f6be98bdd4..5fee511676 100644
  
  
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index f67b9821f2..e941dcbb69 100644
+index 20bb05b..9b16eb3 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
 @@ -17,6 +17,8 @@
@@ -219,7 +219,7 @@ index f67b9821f2..e941dcbb69 100644
  	PROCSIG_CATCHUP_INTERRUPT,	/* sinval catchup interrupt */
  	PROCSIG_NOTIFY_INTERRUPT,	/* listen/notify interrupt */
  	PROCSIG_PARALLEL_MESSAGE,	/* message from cooperating parallel backend */
-@@ -41,9 +45,20 @@ typedef enum
+@@ -42,9 +46,20 @@ typedef enum
  	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
  	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
  
@@ -240,7 +240,7 @@ index f67b9821f2..e941dcbb69 100644
  /*
   * prototypes for functions in procsignal.c
   */
-@@ -51,9 +66,15 @@ extern Size ProcSignalShmemSize(void);
+@@ -52,9 +67,15 @@ extern Size ProcSignalShmemSize(void);
  extern void ProcSignalShmemInit(void);
  
  extern void ProcSignalInit(int pss_idx);
@@ -255,4 +255,4 @@ index f67b9821f2..e941dcbb69 100644
 +
  extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
  
- #endif   /* PROCSIGNAL_H */
+ #endif							/* PROCSIGNAL_H */
