@@ -12,6 +12,9 @@
 
 #include "commands/explain.h"
 #include "miscadmin.h"
+#if PG_VERSION_NUM >= 100000
+#include "pgstat.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 
@@ -161,7 +164,11 @@ SendQueryState(void)
 		if (shm_mq_get_sender(mq) == MyProc)
 			break;
 
+#if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+#else
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_IPC);
+#endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}

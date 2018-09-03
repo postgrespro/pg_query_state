@@ -15,12 +15,12 @@ Using this module there can help in the following things:
 To install `pg_query_state`, please apply patches `custom_signal.patch` and `runtime_explain.patch` to the latest stable version of PostgreSQL and rebuild PostgreSQL.
 
 Correspondence branch names to PostgreSQL version numbers:
-- _PG9_5_ --- PostgreSQL 9.5
+- _PG9_5_    --- PostgreSQL 9.5
 - _PGPRO9_5_ --- PostgresPro 9.5
-- _PGPRO9_6_ --- PostgresPro 9.6
-- _PGPRO10_ --- PostgresPro 10
-- _PG10_ --- PostgreSQL 10
-- _master_ --- development version for the newest version PostgreSQL
+- _PGPRO9_6_ --- PostgreSQL 9.6 and PostgresPro 9.6
+- _PGPRO10_  --- PostgresPro 10
+- _PG10_     --- PostgreSQL 10
+- _master_   --- development version for the newest version PostgreSQL
 
 Then execute this in the module's directory:
 ```

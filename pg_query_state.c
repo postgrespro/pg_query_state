@@ -58,7 +58,12 @@ void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
+#if PG_VERSION_NUM < 100000
 static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
+#else
+static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
+						   uint64 count, bool execute_once);
+#endif
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 static void qs_ExecutorEnd(QueryDesc *queryDesc);
 
@@ -158,9 +163,15 @@ pg_qs_shmem_startup(void)
 	{
 		toc = shm_toc_attach(PG_QS_MODULE_KEY, shmem);
 
+#if PG_VERSION_NUM < 100000
 		counterpart_userid = shm_toc_lookup(toc, num_toc++);
 		params = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
+#else
+		counterpart_userid = shm_toc_lookup(toc, num_toc++, false);
+		params = shm_toc_lookup(toc, num_toc++, false);
+		mq = shm_toc_lookup(toc, num_toc++, false);
+#endif
 	}
 
 	if (prev_shmem_startup_hook)
@@ -305,14 +316,25 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * 		Catch any fatal signals
  */
 static void
+#if PG_VERSION_NUM < 100000
 qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
+#else
+qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
+			   bool execute_once)
+#endif
 {
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
+#if PG_VERSION_NUM < 100000
 			prev_ExecutorRun(queryDesc, direction, count);
 		else
 			standard_ExecutorRun(queryDesc, direction, count);
+#else
+			prev_ExecutorRun(queryDesc, direction, count, execute_once);
+		else
+			standard_ExecutorRun(queryDesc, direction, count, execute_once);
+#endif
 	}
 	PG_CATCH();
 	{
@@ -707,7 +729,11 @@ GetRemoteBackendUserId(PGPROC *proc)
 		if (result != InvalidOid)
 			break;
 
+#if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+#else
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
+#endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
@@ -744,7 +770,12 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 		if (rc & WL_TIMEOUT || delay <= 0)
 			return SHM_MQ_WOULD_BLOCK;
 
+#if PG_VERSION_NUM < 100000
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+#else
+		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay,
+					   PG_WAIT_EXTENSION);
+#endif
 
 		INSTR_TIME_SET_CURRENT(cur_time);
 		INSTR_TIME_SUBTRACT(cur_time, start_time);
@@ -869,7 +900,11 @@ GetRemoteBackendWorkers(PGPROC *proc)
 		result = lcons(proc, result);
 	}
 
+#if PG_VERSION_NUM < 100000
 	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 
 	return result;
 
@@ -959,7 +994,11 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		goto mq_error;
 	Assert(len == msg->length);
 	result = lappend(result, copy_msg(msg));
+#if PG_VERSION_NUM < 100000
 	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 
 	/*
 	 * collect results from all alived parallel workers
@@ -990,7 +1029,11 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		/* aggregate result data */
 		result = lappend(result, copy_msg(msg));
 
+#if PG_VERSION_NUM < 100000
 		shm_mq_detach(mq);
+#else
+		shm_mq_detach(mqh);
+#endif
 	}
 
 	return result;
