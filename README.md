@@ -20,6 +20,7 @@ Correspondence branch names to PostgreSQL version numbers:
 - _PGPRO9_6_ --- PostgreSQL 9.6 and PostgresPro 9.6
 - _PGPRO10_ --- PostgresPro 10
 - _PG10_ --- PostgreSQL 10
+- _PG11_ --- PostgreSQL 11
 - _master_ --- development version for the newest version PostgreSQL
 
 Then execute this in the module's directory:

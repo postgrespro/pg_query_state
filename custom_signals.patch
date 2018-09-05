@@ -1,16 +1,8 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index b9302ac..95f7da2 100644
+index b0dd7d1..1f14b0d 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -27,6 +27,7 @@
- #include "storage/shmem.h"
- #include "storage/sinval.h"
- #include "tcop/tcopprot.h"
-+#include "utils/memutils.h"
- 
- 
- /*
-@@ -60,12 +61,17 @@ typedef struct
+@@ -60,12 +60,17 @@ typedef struct
   */
  #define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
  
@@ -28,12 +20,12 @@ index b9302ac..95f7da2 100644
  /*
   * ProcSignalShmemSize
   *		Compute space needed for procsignal's shared memory
-@@ -166,6 +172,57 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -166,6 +171,57 @@ CleanupProcSignalState(int status, Datum arg)
  }
  
  /*
 + * RegisterCustomProcSignalHandler
-+ * 		Assign specific handler for custom process signal with new ProcSignalReason key.
++ * 		Assign specific handler of custom process signal with new ProcSignalReason key.
 + * 		Return INVALID_PROCSIGNAL if all custom signals have been assigned.
 + */
 +ProcSignalReason
@@ -62,7 +54,7 @@ index b9302ac..95f7da2 100644
 +{
 +	ProcSignalHandler_type old;
 +
-+	AssertArg(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
++	Assert(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
 +
 +	old = CustomHandlers[reason - PROCSIG_CUSTOM_1];
 +	CustomHandlers[reason - PROCSIG_CUSTOM_1] = handler;
@@ -77,7 +69,7 @@ index b9302ac..95f7da2 100644
 +ProcSignalHandler_type
 +GetCustomProcSignalHandler(ProcSignalReason reason)
 +{
-+	AssertArg(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
++	Assert(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
 +
 +	return CustomHandlers[reason - PROCSIG_CUSTOM_1];
 +}
@@ -86,7 +78,7 @@ index b9302ac..95f7da2 100644
   * SendProcSignal
   *		Send a signal to a Postgres process
   *
-@@ -260,7 +317,8 @@ CheckProcSignal(ProcSignalReason reason)
+@@ -260,7 +316,8 @@ CheckProcSignal(ProcSignalReason reason)
  void
  procsignal_sigusr1_handler(SIGNAL_ARGS)
  {
@@ -96,7 +88,7 @@ index b9302ac..95f7da2 100644
  
  	if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
  		HandleCatchupInterrupt();
-@@ -292,9 +350,87 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -292,9 +349,55 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -119,7 +111,7 @@ index b9302ac..95f7da2 100644
 +{
 +	int	save_errno = errno;
 +
-+	AssertArg(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
++	Assert(reason >= PROCSIG_CUSTOM_1 && reason <= PROCSIG_CUSTOM_N);
 +
 +	/* set interrupt flags */
 +	InterruptPending = true;
@@ -140,31 +132,6 @@ index b9302ac..95f7da2 100644
 +CheckAndHandleCustomSignals(void)
 +{
 +	int i;
-+	MemoryContext oldcontext;
-+
-+	static MemoryContext hcs_context = NULL;
-+
-+	/*
-+	 * This is invoked from ProcessInterrupts(), and since some of the
-+	 * functions it calls contain CHECK_FOR_INTERRUPTS(), there is a potential
-+	 * for recursive calls if more signals are received while this runs, so
-+	 * let's block interrupts until done.
-+	 */
-+	HOLD_INTERRUPTS();
-+
-+	/*
-+	 * Moreover, CurrentMemoryContext might be pointing almost anywhere.  We
-+	 * don't want to risk leaking data into long-lived contexts, so let's do
-+	 * our work here in a private context that we can reset on each use.
-+	 */
-+	if (hcs_context == NULL)	/* first time through? */
-+		hcs_context = AllocSetContextCreate(TopMemoryContext,
-+											"HandleCustomSignals",
-+											ALLOCSET_DEFAULT_SIZES);
-+	else
-+		MemoryContextReset(hcs_context);
-+
-+	oldcontext = MemoryContextSwitchTo(hcs_context);
 +
 +	for (i = 0; i < NUM_CUSTOM_PROCSIGNALS; i++)
 +		if (CustomSignalPendings[i])
@@ -176,19 +143,12 @@ index b9302ac..95f7da2 100644
 +			if (handler)
 +				handler();
 +		}
-+
-+	MemoryContextSwitchTo(oldcontext);
-+
-+	/* Might as well clear the context on our way out */
-+	MemoryContextReset(hcs_context);
-+
-+	RESUME_INTERRUPTS();
 +}
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 63a1994..0dfad33 100644
+index 7a9ada2..e9698e1 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -3012,6 +3012,8 @@ ProcessInterrupts(void)
+@@ -3053,6 +3053,8 @@ ProcessInterrupts(void)
  
  	if (ParallelMessagePending)
  		HandleParallelMessages();
@@ -198,19 +158,19 @@ index 63a1994..0dfad33 100644
  
  
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index 20bb05b..9b16eb3 100644
+index 6db0d69..ceadc09 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
-@@ -17,6 +17,8 @@
+@@ -16,7 +16,7 @@
+ 
  #include "storage/backendid.h"
  
- 
+-
 +#define NUM_CUSTOM_PROCSIGNALS 64
-+
  /*
   * Reasons for signalling a Postgres child process (a backend or an auxiliary
   * process, like checkpointer).  We can cope with concurrent signals for different
-@@ -29,6 +31,8 @@
+@@ -29,6 +29,8 @@
   */
  typedef enum
  {
@@ -219,7 +179,7 @@ index 20bb05b..9b16eb3 100644
  	PROCSIG_CATCHUP_INTERRUPT,	/* sinval catchup interrupt */
  	PROCSIG_NOTIFY_INTERRUPT,	/* listen/notify interrupt */
  	PROCSIG_PARALLEL_MESSAGE,	/* message from cooperating parallel backend */
-@@ -42,9 +46,20 @@ typedef enum
+@@ -42,9 +44,20 @@ typedef enum
  	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
  	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
  
@@ -240,7 +200,7 @@ index 20bb05b..9b16eb3 100644
  /*
   * prototypes for functions in procsignal.c
   */
-@@ -52,9 +67,15 @@ extern Size ProcSignalShmemSize(void);
+@@ -52,9 +65,15 @@ extern Size ProcSignalShmemSize(void);
  extern void ProcSignalShmemInit(void);
  
  extern void ProcSignalInit(int pss_idx);
