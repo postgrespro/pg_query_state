@@ -6,6 +6,7 @@ import select
 import time
 import xml.etree.ElementTree as ET
 import yaml
+from time import sleep
 
 def wait(conn):
 	"""wait for some event on connection to postgres"""
@@ -52,10 +53,10 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
-
-	curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
-	result = curs.fetchall()
-
+	result = []
+	while not result:
+		curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
+		result = curs.fetchall()
 	notices = conn.notices[:]
 	conn.close()
 	return result
@@ -85,7 +86,7 @@ def test_deadlock(config):
 
 	n_close((acon1, acon2))
 
-def query_state(config, async_conn, query, steps, args={}, num_workers=0):
+def query_state(config, async_conn, query, args={}, num_workers=0):
 	"""
 	Get intermediate state of 'query' on connection 'async_conn' after number of 'steps'
 	of node executions from start of query
@@ -97,13 +98,7 @@ def query_state(config, async_conn, query, steps, args={}, num_workers=0):
 
 	set_guc(async_conn, 'enable_mergejoin', 'off')
 	set_guc(async_conn, 'max_parallel_workers_per_gather', num_workers)
-	set_guc(async_conn, 'pg_query_state.executor_trace', 'on')
-
-	# execute 'query' specific number of 'steps'
 	acurs.execute(query)
-	for _ in xrange(steps):
-		curs.callproc('executor_step', (async_conn.get_backend_pid(),))
-		# import ipdb; ipdb.set_trace()
 
 	# extract current state of query progress
 	pg_qs_args = {
@@ -113,9 +108,6 @@ def query_state(config, async_conn, query, steps, args={}, num_workers=0):
 	for k, v in args.iteritems():
 		pg_qs_args[k] = v
 	result = pg_query_state(**pg_qs_args)
-
-	# resume query progress and complete it
-	curs.callproc('executor_continue', (async_conn.get_backend_pid(),))
 	wait(async_conn)
 
 	set_guc(async_conn, 'pg_query_state.executor_trace', 'off')
@@ -129,16 +121,15 @@ def test_simple_query(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
-	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+	expected = r"""Aggregate \(Current loop: actual rows=\d+, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
-        ->  Hash \(Current loop: actual rows=0, loop number=1\)
+        ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
+        ->  Hash \(Current loop: actual rows=\d+, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar \(Current loop: actual rows=9, loop number=1\)"""
+              ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs = query_state(config, acon, query, num_steps)
+	qs = query_state(config, acon, query)
 	assert	len(qs) == 1 and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
 	assert	len(notices) == 0
@@ -187,7 +178,6 @@ def test_nested_call(config):
 	drop_function = 'drop function n_join_foo_bar()'
 	call_function = 'select * from n_join_foo_bar()'
 	nested_query = 'SELECT (select count(*) from foo join bar on foo.c1=bar.c1)'
-	num_steps = 10
 	expected = 'Function Scan on n_join_foo_bar (Current loop: actual rows=0, loop number=1)'
 	expected_nested = r"""Result \(Current loop: actual rows=0, loop number=1\)
   InitPlan 1 \(returns \$0\)
@@ -197,12 +187,12 @@ def test_nested_call(config):
                 ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
                 ->  Hash \(Current loop: actual rows=0, loop number=1\)
                       Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-                      ->  Seq Scan on bar \(Current loop: actual rows=8, loop number=1\)"""
+                      ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	util_curs.execute(create_function)
 	util_conn.commit()
 
-	qs = query_state(config, acon, call_function, num_steps)
+	qs = query_state(config, acon, call_function)
 	assert 	len(qs) == 2 \
 		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
 		and qs[0][1] == 0 and qs[1][1] == 1 \
@@ -224,24 +214,26 @@ def test_insert_on_conflict(config):
 	util_curs = util_conn.cursor()
 	add_field_uniqueness = 'alter table foo add constraint unique_c1 unique(c1)'
 	drop_field_uniqueness = 'alter table foo drop constraint unique_c1'
-	num_steps = 10
-	query = 'insert into foo select i, md5(random()::text) from generate_series(1, %d) as i on conflict do nothing' % (num_steps + 1)
-	expected = """Insert on foo (Current loop: actual rows=0, loop number=1)
+	query = 'insert into foo select i, md5(random()::text) from generate_series(1, 30000) as i on conflict do nothing'
+
+	expected = r"""Insert on foo \(Current loop: actual rows=\d+, loop number=\d+\)
   Conflict Resolution: NOTHING
-  Conflicting Tuples: 9
-  ->  Function Scan on generate_series i (Current loop: actual rows=10, loop number=1)"""
+  Conflicting Tuples: \d+
+  ->  Function Scan on generate_series i \(Current loop: actual rows=\d+, loop number=\d+\)"""
 
 	util_curs.execute(add_field_uniqueness)
 	util_conn.commit()
 
-	qs = query_state(config, acon, query, num_steps)
+	qs = query_state(config, acon, query)
 	assert 	len(qs) == 1 \
 		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
-		and qs[0][2] == query and qs[0][3] == expected \
+		and qs[0][2] == query and re.match(expected, qs[0][3]) \
 		and qs[0][4] == None
 	assert	len(notices) == 0
 
 	util_curs.execute(drop_field_uniqueness)
+	util_curs.execute("ANALYZE foo")
+	util_curs.execute("ANALYZE bar")
 
 	util_conn.close()
 	n_close((acon,))
@@ -270,40 +262,27 @@ def test_trigger(config):
 	create_trigger = """
 		create trigger unique_foo_c1
 			before insert or update of c1 on foo for row
-			execute procedure unique_c1_in_foo()"""
+			execute procedure unique_c1_in_foo()"""	
 	drop_temps = 'drop function unique_c1_in_foo() cascade'
-	num_steps = 10
-	query = 'insert into foo select i, md5(random()::text) from generate_series(1, %d) as i' % (num_steps + 1)
-	expected_upper = """Insert on foo (Current loop: actual rows=0, loop number=1)
-  ->  Function Scan on generate_series i (Current loop: actual rows=2, loop number=1)"""
-	trigger_suffix = 'Trigger unique_foo_c1: calls=1'
-	expected_inner = """Result (Current loop: actual rows=0, loop number=1)
-  SubPlan 1
-    ->  Materialize (Current loop: actual rows=1, loop number=1)
-          ->  Seq Scan on foo (Current loop: actual rows=1, loop number=1)"""
+	query = 'insert into foo select i, md5(random()::text) from generate_series(1, 10000) as i'
+	expected_upper = r"""Insert on foo \(Current loop: actual rows=\d+, loop number=1\)
+  ->  Function Scan on generate_series i \(Current loop: actual rows=\d+, loop number=1\)"""
+	trigger_suffix = r"""Trigger unique_foo_c1: calls=\d+"""
 
 	util_curs.execute(create_trigger_function)
 	util_curs.execute(create_trigger)
 	util_conn.commit()
 
-	qs = query_state(config, acon, query, num_steps,  {'triggers': True})
-	assert 	len(qs) == 2 \
-		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
-		and qs[0][2] == query and qs[0][3] == expected_upper + '\n' + trigger_suffix \
-		and qs[0][4] == None \
-		and qs[1][0] == acon.get_backend_pid() and qs[1][1] == 1 \
-		and qs[1][2] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][3] == expected_inner \
-		and qs[1][4] == None
+	qs = query_state(config, acon, query, {'triggers': True})
+	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
+		and qs[0][4] == None
 	assert	len(notices) == 0
 
-	qs = query_state(config, acon, query, num_steps, {'triggers': False})
-	assert 	len(qs) == 2 \
-		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
-		and qs[0][2] == query and qs[0][3] == expected_upper \
-		and qs[0][4] == None \
-		and qs[1][0] == acon.get_backend_pid() and qs[1][1] == 1 \
-		and qs[1][2] == 'SELECT new.c1 in (select c1 from foo)' and qs[1][3] == expected_inner \
-		and qs[1][4] == None
+	qs = query_state(config, acon, query, {'triggers': False})
+	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
+		and qs[0][4] == None
 	assert	len(notices) == 0
 
 	util_curs.execute(drop_temps)
@@ -316,16 +295,15 @@ def test_costs(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
 	expected = r"""Aggregate  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=8\) \(Current loop: actual rows=0, loop number=1\)
   ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=0, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1, loop number=1\)
         ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=0, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=9, loop number=1\)"""
+              ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs = query_state(config, acon, query, num_steps, {'costs': True})
+	qs = query_state(config, acon, query, {'costs': True})
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -336,7 +314,6 @@ def test_buffers(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
 	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
   ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
@@ -344,12 +321,12 @@ def test_buffers(config):
               Buffers: [^\n]*
         ->  Hash \(Current loop: actual rows=0, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar \(Current loop: actual rows=9, loop number=1\)
+              ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)
                     Buffers: .*"""
 
 	set_guc(acon, 'pg_query_state.enable_buffers', 'on')
 
-	qs = query_state(config, acon, query, num_steps, {'buffers': True})
+	qs = query_state(config, acon, query, {'buffers': True})
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -360,18 +337,17 @@ def test_timing(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
 	expected = r"""Aggregate \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
   ->  Hash Join \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=1, loop number=1\)
         ->  Hash \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=9, loop number=1\)"""
+              ->  Seq Scan on bar \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)"""
 
 	set_guc(acon, 'pg_query_state.enable_timing', 'on')
 
-	qs = query_state(config, acon, query, num_steps, {'timing': True})
+	qs = query_state(config, acon, query, {'timing': True})
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -402,20 +378,19 @@ def test_formats(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
 	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
   ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
         ->  Hash \(Current loop: actual rows=0, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar \(Current loop: actual rows=9, loop number=1\)"""
+              ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs = query_state(config, acon, query, num_steps, {'format': 'text'})
+	qs = query_state(config, acon, query, {'format': 'text'})
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
-	qs = query_state(config, acon, query, num_steps, {'format': 'json'})
+	qs = query_state(config, acon, query, {'format': 'json'})
 	try:
 		js_obj = json.loads(qs[0][3])
 	except ValueError:
@@ -424,7 +399,7 @@ def test_formats(config):
 	assert	len(notices) == 0
 	check_plan(js_obj['Plan'])
 
-	qs = query_state(config, acon, query, num_steps, {'format': 'xml'})
+	qs = query_state(config, acon, query, {'format': 'xml'})
 	assert 	len(qs) == 1
 	assert	len(notices) == 0
 	try:
@@ -433,7 +408,7 @@ def test_formats(config):
 		assert False, 'Invalid xml format'
 	check_xml(xml_root)
 
-	qs = query_state(config, acon, query, num_steps, {'format': 'yaml'})
+	qs = query_state(config, acon, query, {'format': 'yaml'})
 	try:
 		yaml_doc = yaml.load(qs[0][3])
 	except:
@@ -449,19 +424,18 @@ def test_timing_buffers_conflicts(config):
 
 	acon, = n_async_connect(config)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	num_steps = 10
 	timing_pattern = '(?:running time=\d+.\d+)|(?:actual time=\d+.\d+..\d+.\d+)'
 	buffers_pattern = 'Buffers:'
 
-	qs = query_state(config, acon, query, num_steps, {'timing': True, 'buffers': False})
+	qs = query_state(config, acon, query, {'timing': True, 'buffers': False})
 	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
 	assert notices == ['WARNING:  timing statistics disabled\n']
 
-	qs = query_state(config, acon, query, num_steps, {'timing': False, 'buffers': True})
+	qs = query_state(config, acon, query, {'timing': False, 'buffers': True})
 	assert 	len(qs) == 1 and not re.search(buffers_pattern, qs[0][3])
 	assert notices == ['WARNING:  buffers statistics disabled\n']
 
-	qs = query_state(config, acon, query, num_steps, {'timing': True, 'buffers': True})
+	qs = query_state(config, acon, query, {'timing': True, 'buffers': True})
 	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3]) \
 						 and not re.search(buffers_pattern, qs[0][3])
 	assert len(notices) == 2 and 'WARNING:  timing statistics disabled\n' in notices \
