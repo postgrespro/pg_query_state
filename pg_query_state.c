@@ -703,7 +703,7 @@ SendCurrentUserId(void)
  *
  * Assume the `proc` points on valid backend and it's not current process.
  *
- * This fuction must be called after registeration of `UserIdPollReason` and
+ * This fuction must be called after registration of `UserIdPollReason` and
  * initialization `RemoteUserIdResult` object in shared memory.
  */
 static Oid
