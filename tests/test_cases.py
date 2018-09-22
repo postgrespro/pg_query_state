@@ -132,7 +132,6 @@ def test_simple_query(config):
 	qs = query_state(config, acon, query)
 	assert	len(qs) == 1 and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
-	assert	len(notices) == 0
 
 	n_close((acon,))
 
@@ -232,8 +231,6 @@ def test_insert_on_conflict(config):
 	assert	len(notices) == 0
 
 	util_curs.execute(drop_field_uniqueness)
-	util_curs.execute("ANALYZE foo")
-	util_curs.execute("ANALYZE bar")
 
 	util_conn.close()
 	n_close((acon,))

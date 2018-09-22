@@ -41,13 +41,13 @@ tests = [
         test_simple_query,
         test_concurrent_access,
         test_nested_call,
-        test_insert_on_conflict,
         test_trigger,
         test_costs,
         test_buffers,
         test_timing,
         test_formats,
         test_timing_buffers_conflicts,
+        test_insert_on_conflict,
         ]
 
 def setup(con):
