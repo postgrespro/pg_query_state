@@ -3,8 +3,9 @@
 MODULE_big = pg_query_state
 OBJS = pg_query_state.o signal_handler.o $(WIN32RES)
 EXTENSION = pg_query_state
-EXTVERSION = 1.0
-DATA = $(EXTENSION)--$(EXTVERSION).sql
+EXTVERSION = 1.1
+DATA = pg_query_state--1.0--1.1.sql
+DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 
 EXTRA_CLEAN = ./isolation_output
@@ -19,6 +20,9 @@ top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
+
+$(EXTENSION)--$(EXTVERSION).sql: init.sql
+	cat $^ > $@
 
 check: isolationcheck
 
