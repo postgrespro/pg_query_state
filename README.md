@@ -2,7 +2,7 @@
 The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the latest stable version of PostgreSQL. Different branches are intended for different version numbers of PostgreSQL, e.g., branch _PG9_5_ corresponds to PostgreSQL 9.5.
 
 ## Overview
-Each nonutility query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree wich is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
+Each nonutility query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree which is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
 
 In fact, this module is able to explore external backend and determine its actual state. Particularly it's helpful when backend executes a heavy query or gets stuck.
 
@@ -80,11 +80,11 @@ Optional arguments:
  - `timing` --- print timing data for each node, if collecting of timing statistics is turned off on called side resulting output will contain WARNING message `timing statistics disabled`;
  - `buffers` --- print buffers usage, if collecting of buffers statistics is turned off on called side resulting output will contain WARNING message `buffers statistics disabled`;
  - `triggers` --- include triggers statistics in result plan trees;
- - `format` --- EXPLAIN format to be used for plans printing, posible values: {`text`, `xml`, `json`, `yaml`}.
+ - `format` --- EXPLAIN format to be used for plans printing, possible values: {`text`, `xml`, `json`, `yaml`}.
 
 If callable backend is not executing any query the function prints INFO message about backend's state taken from `pg_stat_activity` view if it exists there.
 
-Calling role have to be superuser or member of the role whose backend is being called. Othrewise function prints ERROR message `permission denied`.
+Calling role have to be superuser or member of the role whose backend is being called. Otherwise function prints ERROR message `permission denied`.
 
 ## Configuration settings
 There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/static/config-setting.html) variables designed to toggle the whole module and the collecting of specific statistic parameters while query is running:
