@@ -142,10 +142,11 @@ make USE_PGXS=1 installcheck || status=$?
 if [ -f regression.diffs ]; then cat regression.diffs; fi
 
 # run python tests
-set +x
+set +x -e
 virtualenv /tmp/env && source /tmp/env/bin/activate &&
-pip install PyYAML && pip install psycopg2 &&
-python tests/pg_qs_test_runner.py --port $PGPORT #--database db --user zloj
+pip install PyYAML && pip install psycopg2
+set -e #exit virtualenv with error code
+python tests/pg_qs_test_runner.py --port $PGPORT
 deactivate
 set -x
 
@@ -162,7 +163,7 @@ fi
 
 # something's wrong, exit now!
 if [ $status -ne 0 ]; then exit 1; fi
-
+set +e
 # generate *.gcov files
 gcov *.c *.h
 
