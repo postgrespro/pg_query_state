@@ -1,5 +1,5 @@
 diff --git a/src/backend/commands/explain.c b/src/backend/commands/explain.c
-index 82ba58e..bf7dfa6 100644
+index 82ba58e..6ade35c 100644
 --- a/src/backend/commands/explain.c
 +++ b/src/backend/commands/explain.c
 @@ -667,15 +667,35 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
@@ -162,7 +162,19 @@ index 82ba58e..bf7dfa6 100644
  	/* in text format, first line ends here */
  	if (es->format == EXPLAIN_FORMAT_TEXT)
  		appendStringInfoChar(es->str, '\n');
-@@ -2269,20 +2361,17 @@ show_instrumentation_count(const char *qlabel, int which,
+@@ -1508,8 +1600,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
+ 	if (es->buffers && planstate->instrument)
+ 		show_buffer_usage(es, &planstate->instrument->bufusage);
+ 
+-	/* Show worker detail */
+-	if (es->analyze && es->verbose && planstate->worker_instrument)
++	/* Show worker detail after query execution */
++	if (es->analyze && es->verbose && planstate->worker_instrument
++			&& !es->runtime)
+ 	{
+ 		WorkerInstrumentation *w = planstate->worker_instrument;
+ 		bool		opened_group = false;
+@@ -2269,20 +2362,17 @@ show_instrumentation_count(const char *qlabel, int which,
  	if (!es->analyze || !planstate->instrument)
  		return;
  
@@ -189,7 +201,7 @@ index 82ba58e..bf7dfa6 100644
  }
  
  /*
-@@ -2754,14 +2843,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
+@@ -2754,14 +2844,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  			double		insert_path;
  			double		other_path;
  

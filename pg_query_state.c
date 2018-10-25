@@ -35,7 +35,8 @@ PG_MODULE_MAGIC;
 
 #define	PG_QS_MODULE_KEY	0xCA94B108
 #define	PG_QUERY_STATE_KEY	0
-#define	EXECUTOR_TRACE_KEY	1
+
+#define MIN_TIMEOUT   5000
 
 #define TEXT_CSTR_CMP(text, cstr) \
 	(memcmp(VARDATA(text), (cstr), VARSIZE(text) - VARHDRSZ))
@@ -44,7 +45,6 @@ PG_MODULE_MAGIC;
 bool pg_qs_enable = true;
 bool pg_qs_timing = false;
 bool pg_qs_buffers = false;
-bool pg_qs_trace = false;
 
 /* Saved hook values in case of unload */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
@@ -52,17 +52,20 @@ static ExecutorRun_hook_type prev_ExecutorRun = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
-static PostExecProcNode_hook_type prev_postExecProcNode = NULL;
 
 void		_PG_init(void);
 void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
+#if PG_VERSION_NUM < 100000
 static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
+#else
+static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
+						   uint64 count, bool execute_once);
+#endif
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 static void qs_ExecutorEnd(QueryDesc *queryDesc);
-static void qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
@@ -87,30 +90,12 @@ typedef struct
 	Latch	*caller;
 } RemoteUserIdResult;
 
-/*
- * Kinds of trace commands
- */
-typedef enum
-{
-	STEP,
-	CONTINUE
-} trace_cmd;
-
-/*
- * Trace command transmitted to counterpart
- */
-typedef struct
-{
-	trace_cmd	command;
-	pid_t 		tracer;
-	pid_t 		traceable;
-} trace_request;
-
 static void SendCurrentUserId(void);
 static void SendBgWorkerPids(void);
 static Oid GetRemoteBackendUserId(PGPROC *proc);
 static List *GetRemoteBackendWorkers(PGPROC *proc);
-static List *GetRemoteBackendQueryStates(List *procs,
+static List *GetRemoteBackendQueryStates(PGPROC *leader,
+										 List *pworkers,
 										 bool verbose,
 										 bool costs,
 										 bool timing,
@@ -122,7 +107,6 @@ static List *GetRemoteBackendQueryStates(List *procs,
 shm_toc			*toc = NULL;
 RemoteUserIdResult *counterpart_userid = NULL;
 pg_qs_params   	*params = NULL;
-trace_request	*trace_req = NULL;
 shm_mq 			*mq = NULL;
 
 /*
@@ -137,10 +121,9 @@ pg_qs_shmem_size()
 
 	shm_toc_initialize_estimator(&e);
 
-	nkeys = 4;
+	nkeys = 3;
 
 	shm_toc_estimate_chunk(&e, sizeof(RemoteUserIdResult));
-	shm_toc_estimate_chunk(&e, sizeof(trace_request));
 	shm_toc_estimate_chunk(&e, sizeof(pg_qs_params));
 	shm_toc_estimate_chunk(&e, (Size) QUEUE_SIZE);
 
@@ -173,10 +156,6 @@ pg_qs_shmem_startup(void)
 		params = shm_toc_allocate(toc, sizeof(pg_qs_params));
 		shm_toc_insert(toc, num_toc++, params);
 
-		trace_req = shm_toc_allocate(toc, sizeof(trace_request));
-		shm_toc_insert(toc, num_toc++, trace_req);
-		MemSet(trace_req, 0, sizeof(trace_request));
-
 		mq = shm_toc_allocate(toc, QUEUE_SIZE);
 		shm_toc_insert(toc, num_toc++, mq);
 	}
@@ -184,10 +163,15 @@ pg_qs_shmem_startup(void)
 	{
 		toc = shm_toc_attach(PG_QS_MODULE_KEY, shmem);
 
+#if PG_VERSION_NUM < 100000
 		counterpart_userid = shm_toc_lookup(toc, num_toc++);
 		params = shm_toc_lookup(toc, num_toc++);
-		trace_req = shm_toc_lookup(toc, num_toc++);
 		mq = shm_toc_lookup(toc, num_toc++);
+#else
+		counterpart_userid = shm_toc_lookup(toc, num_toc++, false);
+		params = shm_toc_lookup(toc, num_toc++, false);
+		mq = shm_toc_lookup(toc, num_toc++, false);
+#endif
 	}
 
 	if (prev_shmem_startup_hook)
@@ -256,16 +240,6 @@ _PG_init(void)
 							 NULL,
 							 NULL,
 							 NULL);
-	DefineCustomBoolVariable("pg_query_state.executor_trace",
-							 "Turn on trace of plan execution.",
-							 NULL,
-							 &pg_qs_trace,
-							 false,
-							 PGC_SUSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
 	EmitWarningsOnPlaceholders("pg_query_state");
 
 	/* Install hooks */
@@ -279,7 +253,6 @@ _PG_init(void)
 	ExecutorEnd_hook = qs_ExecutorEnd;
 	prev_shmem_startup_hook = shmem_startup_hook;
 	shmem_startup_hook = pg_qs_shmem_startup;
-	prev_postExecProcNode = postExecProcNode_hook;
 }
 
 /*
@@ -300,62 +273,6 @@ _PG_fini(void)
 	ExecutorFinish_hook = prev_ExecutorFinish;
 	ExecutorEnd_hook = prev_ExecutorEnd;
 	shmem_startup_hook = prev_shmem_startup_hook;
-	postExecProcNode_hook = prev_postExecProcNode;
-}
-
-/*
- * In trace mode suspend query execution until other backend resumes it
- */
-static void
-suspend_traceable_query()
-{
-	for (;;)
-	{
-		/* Check whether current backend is traced */
-		if (MyProcPid == trace_req->traceable)
-		{
-			PGPROC *tracer = BackendPidGetProc(trace_req->tracer);
-
-			Assert(tracer != NULL);
-
-			if (trace_req->command == CONTINUE)
-				postExecProcNode_hook = prev_postExecProcNode;
-			trace_req->traceable = 0;
-			SetLatch(&tracer->procLatch);
-			break;
-		}
-
-		/*
-		 * Wait for our latch to be set.  It might already be set for some
-		 * unrelated reason, but that'll just result in one extra trip through
-		 * the loop.  It's worth it to avoid resetting the latch at top of
-		 * loop, because setting an already-set latch is much cheaper than
-		 * setting one that has been reset.
-		 */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-
-		/* An interrupt may have occurred while we were waiting. */
-		CHECK_FOR_INTERRUPTS();
-
-		/* Reset the latch so we don't spin. */
-		ResetLatch(MyLatch);
-	}
-}
-
-/*
- * postExecProcNode_hook:
- * 		interrupt before execution next node of plan tree
- * 		until other process resumes it through function calls:
- * 			'executor_step(<pid>)'
- * 			'executor_continue(<pid>)'
- */
-static void
-qs_postExecProcNode(PlanState *planstate, TupleTableSlot *result)
-{
-	suspend_traceable_query();
-
-	if (prev_postExecProcNode)
-		prev_postExecProcNode(planstate, result);
 }
 
 /*
@@ -385,15 +302,6 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 		/* push structure about current query in global stack */
 		QueryDescStack = lcons(queryDesc, QueryDescStack);
-
-		/* set/reset hook for trace mode before start of upper level query */
-		if (list_length(QueryDescStack) == 1)
-			postExecProcNode_hook = (pg_qs_enable && pg_qs_trace) ?
-										qs_postExecProcNode : prev_postExecProcNode;
-
-		/* suspend traceable query if it is not continued (hook is not thrown off) */
-		if (postExecProcNode_hook == qs_postExecProcNode)
-			suspend_traceable_query();
 	}
 	PG_CATCH();
 	{
@@ -408,14 +316,25 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * 		Catch any fatal signals
  */
 static void
+#if PG_VERSION_NUM < 100000
 qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
+#else
+qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
+			   bool execute_once)
+#endif
 {
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
+#if PG_VERSION_NUM < 100000
 			prev_ExecutorRun(queryDesc, direction, count);
 		else
 			standard_ExecutorRun(queryDesc, direction, count);
+#else
+			prev_ExecutorRun(queryDesc, direction, count, execute_once);
+		else
+			standard_ExecutorRun(queryDesc, direction, count, execute_once);
+#endif
 	}
 	PG_CATCH();
 	{
@@ -580,7 +499,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 	FuncCallContext	*funcctx;
 	MemoryContext	oldcontext;
 	pg_qs_fctx		*fctx;
-	const int		N_ATTRS = 5;
+#define		N_ATTRS  5
 	pid_t			pid = PG_GETARG_INT32(0);
 
 	if (SRF_IS_FIRSTCALL())
@@ -637,16 +556,24 @@ pg_query_state(PG_FUNCTION_ARGS)
 
 		bg_worker_procs = GetRemoteBackendWorkers(proc);
 
-		msgs = GetRemoteBackendQueryStates(lcons(proc, bg_worker_procs),
+		msgs = GetRemoteBackendQueryStates(proc,
+										   bg_worker_procs,
 										   verbose,
 										   costs,
 										   timing,
 										   buffers,
 										   triggers,
 										   format);
-		msg = (shm_mq_msg *) linitial(msgs);
 
 		funcctx = SRF_FIRSTCALL_INIT();
+		if (list_length(msgs) == 0)
+		{
+			elog(WARNING, "backend does not reply");
+			LockRelease(&tag, ExclusiveLock, false);
+			SRF_RETURN_DONE(funcctx);
+		}
+
+		msg = (shm_mq_msg *) linitial(msgs);
 		switch (msg->result_code)
 		{
 			case QUERY_NOT_RUNNING:
@@ -761,82 +688,6 @@ pg_query_state(PG_FUNCTION_ARGS)
 		SRF_RETURN_DONE(funcctx);
 }
 
-/*
- * Execute specific tracing command of other backend with specified 'pid'
- */
-static void
-exec_trace_cmd(pid_t pid, trace_cmd cmd)
-{
-	LOCKTAG			tag;
-	PGPROC			*proc;
-
-	if (!module_initialized)
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("pg_query_state wasn't initialized yet")));
-
-	if (pid == MyProcPid)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("attempt to trace self process")));
-
-	proc = BackendPidGetProc(pid);
-	if (!proc || proc->backendId == InvalidBackendId)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("backend with pid=%d not found", pid)));
-
-	init_lock_tag(&tag, EXECUTOR_TRACE_KEY);
-	LockAcquire(&tag, ExclusiveLock, false, false);
-
-	trace_req->tracer = MyProcPid;
-	trace_req->traceable = pid;
-	trace_req->command = cmd;
-	SetLatch(&proc->procLatch);
-
-	/*
-	 * Wait until traceable backend handles trace command (resets its pid in shared memory)
-	 * so that next 'executor_*' call can not rewrite the shared structure 'trace_req'
-	 */
-	for (;;)
-	{
-		/* Check whether traceable backend is reset its pid */
-		if (0 == trace_req->traceable)
-			break;
-
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-		CHECK_FOR_INTERRUPTS();
-		ResetLatch(MyLatch);
-	}
-
-	LockRelease(&tag, ExclusiveLock, false);
-}
-
-/*
- * Take a step in tracing of backend with specified pid
- */
-PG_FUNCTION_INFO_V1(executor_step);
-Datum
-executor_step(PG_FUNCTION_ARGS)
-{
-	pid_t pid = PG_GETARG_INT32(0);
-
-	exec_trace_cmd(pid, STEP);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Continue to execute query under tracing of backend with specified pid
- */
-PG_FUNCTION_INFO_V1(executor_continue);
-Datum
-executor_continue(PG_FUNCTION_ARGS)
-{
-	pid_t pid = PG_GETARG_INT32(0);
-
-	exec_trace_cmd(pid, CONTINUE);
-
-	PG_RETURN_VOID();
-}
-
 static void
 SendCurrentUserId(void)
 {
@@ -852,7 +703,7 @@ SendCurrentUserId(void)
  *
  * Assume the `proc` points on valid backend and it's not current process.
  *
- * This fuction must be called after registeration of `UserIdPollReason` and
+ * This fuction must be called after registration of `UserIdPollReason` and
  * initialization `RemoteUserIdResult` object in shared memory.
  */
 static Oid
@@ -878,7 +729,11 @@ GetRemoteBackendUserId(PGPROC *proc)
 		if (result != InvalidOid)
 			break;
 
+#if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+#else
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
+#endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
@@ -898,31 +753,35 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 							void **datap,
 							long timeout)
 {
-
-#ifdef HAVE_INT64_TIMESTAMP
-#define GetNowFloat()	((float8) GetCurrentTimestamp() / 1000.0)
-#else
-#define GetNowFloat()	1000.0 * GetCurrentTimestamp()
-#endif
-
-	float8 	endtime = GetNowFloat() + timeout;
-	int 	rc = 0;
+	int 		rc = 0;
+	long 		delay = timeout;
 
 	for (;;)
 	{
-		long 		delay;
+		instr_time	start_time;
+		instr_time	cur_time;
 		shm_mq_result mq_receive_result;
 
-		mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
+		INSTR_TIME_SET_CURRENT(start_time);
 
+		mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
 		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
 			return mq_receive_result;
-
-		if (rc & WL_TIMEOUT)
+		if (rc & WL_TIMEOUT || delay <= 0)
 			return SHM_MQ_WOULD_BLOCK;
 
-		delay = (long) (endtime - GetNowFloat());
+#if PG_VERSION_NUM < 100000
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+#else
+		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay,
+					   PG_WAIT_EXTENSION);
+#endif
+
+		INSTR_TIME_SET_CURRENT(cur_time);
+		INSTR_TIME_SUBTRACT(cur_time, start_time);
+
+		delay = timeout - (long) INSTR_TIME_GET_MILLISEC(cur_time);
+
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
@@ -1026,12 +885,12 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
 	if (sig_result == -1)
-		return NIL;
+		goto signal_error;
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
-	mq_receive_result = shm_mq_receive_with_timeout(mqh, &msg_len, (void **) &msg, 1000);
+	mq_receive_result = shm_mq_receive(mqh, &msg_len, (void **) &msg, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
-		return NIL;
+		goto mq_error;
 
 	for (i = 0; i < msg->number; i++)
 	{
@@ -1041,9 +900,20 @@ GetRemoteBackendWorkers(PGPROC *proc)
 		result = lcons(proc, result);
 	}
 
+#if PG_VERSION_NUM < 100000
 	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 
 	return result;
+
+signal_error:
+	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("invalid send signal")));
+mq_error:
+	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("error in message queue data transmitting")));
 }
 
 static shm_mq_msg *
@@ -1056,7 +926,8 @@ copy_msg(shm_mq_msg *msg)
 }
 
 static List *
-GetRemoteBackendQueryStates(List *procs,
+GetRemoteBackendQueryStates(PGPROC *leader,
+							List *pworkers,
 						    bool verbose,
 						    bool costs,
 						    bool timing,
@@ -1067,6 +938,11 @@ GetRemoteBackendQueryStates(List *procs,
 	List			*result = NIL;
 	List			*alive_procs = NIL;
 	ListCell		*iter;
+	int		 		 sig_result;
+	shm_mq_handle  	*mqh;
+	shm_mq_result	 mq_receive_result;
+	shm_mq_msg		*msg;
+	Size			 len;
 
 	Assert(QueryStatePollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
@@ -1080,14 +956,21 @@ GetRemoteBackendQueryStates(List *procs,
 	params->format = format;
 	pg_write_barrier();
 
+	/* initialize message queue that will transfer query states */
+	mq = shm_mq_create(mq, QUEUE_SIZE);
+
 	/*
 	 * send signal `QueryStatePollReason` to all processes and define all alive
 	 * 		ones
 	 */
-	foreach(iter, procs)
+	sig_result = SendProcSignal(leader->pid,
+								QueryStatePollReason,
+								leader->backendId);
+	if (sig_result == -1)
+		goto signal_error;
+	foreach(iter, pworkers)
 	{
 		PGPROC 	*proc = (PGPROC *) lfirst(iter);
-		int		 sig_result;
 
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
@@ -1102,16 +985,27 @@ GetRemoteBackendQueryStates(List *procs,
 		alive_procs = lappend(alive_procs, proc);
 	}
 
+	/* extract query state from leader process */
+	shm_mq_set_sender(mq, leader);
+	shm_mq_set_receiver(mq, MyProc);
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+		goto mq_error;
+	Assert(len == msg->length);
+	result = lappend(result, copy_msg(msg));
+#if PG_VERSION_NUM < 100000
+	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
+
 	/*
-	 * collect results from all alived processes
+	 * collect results from all alived parallel workers
 	 */
 	foreach(iter, alive_procs)
 	{
 		PGPROC 			*proc = (PGPROC *) lfirst(iter);
-		shm_mq_handle  	*mqh;
-		shm_mq_result	 mq_receive_result;
-		shm_mq_msg		*msg;
-		Size			 len;
 
 		/* prepare message queue to transfer data */
 		mq = shm_mq_create(mq, QUEUE_SIZE);
@@ -1125,7 +1019,7 @@ GetRemoteBackendQueryStates(List *procs,
 		mq_receive_result = shm_mq_receive_with_timeout(mqh,
 														&len,
 														(void **) &msg,
-														5000);
+														MIN_TIMEOUT);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
 			/* counterpart is died, not consider it */
 			continue;
@@ -1135,7 +1029,11 @@ GetRemoteBackendQueryStates(List *procs,
 		/* aggregate result data */
 		result = lappend(result, copy_msg(msg));
 
+#if PG_VERSION_NUM < 100000
 		shm_mq_detach(mq);
+#else
+		shm_mq_detach(mqh);
+#endif
 	}
 
 	return result;
@@ -1143,4 +1041,7 @@ GetRemoteBackendQueryStates(List *procs,
 signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("invalid send signal")));
+mq_error:
+	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("error in message queue data transmitting")));
 }
