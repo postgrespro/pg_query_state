@@ -8,7 +8,8 @@ DATA = pg_query_state--1.0--1.1.sql
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 
-EXTRA_CLEAN = ./isolation_output
+EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
+	Dockerfile ./tests/*.pyc
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

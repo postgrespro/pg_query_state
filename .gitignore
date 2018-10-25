@@ -1,5 +1,11 @@
 *.o
 *.so
 *.swp
+*.pyc
+*.gcda
+*.gcno
+*.gcov
+pg_query_state--*.sql
 cscope.out
 tags
+Dockerfile
