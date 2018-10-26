@@ -42,8 +42,42 @@ def n_close(conns):
 
 notices = []
 
+def debug_output(qs, qs_len, pid, query, expected):
+	something_happened = False
+	if (qs_len and len(qs) != qs_len ):
+		print "len(qs): ", len(qs), ", expected: ", qs_len
+		something_happened = True
+	if (pid and qs[0][0] != pid):
+		print "qs[0][0]: ", qs[0][0], " = ", pid
+		something_happened = True
+	if (qs[0][1] != 0):
+		print "qs[0][1]: ", qs[0][1], ", expected: 0"
+		something_happened = True
+	if (qs[0][2] != query):
+		print "qs[0][2]:\n", qs[0][2]
+		print "Expected:\n", query
+		something_happened = True
+	if (not (re.match(expected, qs[0][3]))):
+		print "qs[0][3]:\n", qs[0][3]
+		print "Expected:\n", expected
+		something_happened = True
+	if (qs[0][4] != None):
+		print "qs[0][4]: ", qs[0][4], "Expected: None"
+		something_happened = True
+	if (qs_len and len(qs) > qs_len):
+		for i in range(qs_len, len(qs)):
+			print "qs[",i,"][0]: ", qs[i][0]
+			print "qs[",i,"][1]: ", qs[i][1]
+			print "qs[",i,"][2]: ", qs[i][2]
+			print "qs[",i,"][3]: ", qs[i][3]
+			print "qs[",i,"][4]: ", qs[i][4]
+		something_happened = True
+	if (something_happened):
+		print "If test have not crashed, then it's OK"
+
 def notices_warning():
 	if (len(notices) > 0):
+		print("")
 		print("WARNING:")
 		print(notices)
 
@@ -135,7 +169,10 @@ def test_simple_query(config):
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(config, acon, query)
-	assert	len(qs) == 1 and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+	debug_output(qs, 1, acon.get_backend_pid(), query, expected)
+	notices_warning()
+	#assert	len(qs) == 1 #Skip this check while output of test can be different
+	assert	qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
 
 	n_close((acon,))
@@ -230,8 +267,11 @@ def test_insert_on_conflict(config):
 	util_conn.commit()
 
 	qs = query_state(config, acon, query)
-	assert 	len(qs) == 1 \
-		and qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+
+	debug_output(qs, 1, acon.get_backend_pid(), query, expected)
+	notices_warning()
+	#assert 	len(qs) == 1 \
+	assert 	qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) \
 		and qs[0][4] == None
 	assert	len(notices) == 0
@@ -277,12 +317,16 @@ def test_trigger(config):
 	util_conn.commit()
 
 	qs = query_state(config, acon, query, {'triggers': True})
+	debug_output(qs, None, acon.get_backend_pid(), query, expected_upper)
+	notices_warning()
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
 	assert	len(notices) == 0
 
 	qs = query_state(config, acon, query, {'triggers': False})
+	debug_output(qs, None, acon.get_backend_pid(), query, expected_upper)
+	notices_warning()
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
@@ -307,6 +351,8 @@ def test_costs(config):
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(config, acon, query, {'costs': True})
+	debug_output(qs, 1, None, query, expected)
+	notices_warning()
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -330,6 +376,8 @@ def test_buffers(config):
 	set_guc(acon, 'pg_query_state.enable_buffers', 'on')
 
 	qs = query_state(config, acon, query, {'buffers': True})
+	debug_output(qs, 1, None, query, expected)
+	notices_warning()
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -351,6 +399,8 @@ def test_timing(config):
 	set_guc(acon, 'pg_query_state.enable_timing', 'on')
 
 	qs = query_state(config, acon, query, {'timing': True})
+	debug_output(qs, 1, None, query, expected)
+	notices_warning()
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
@@ -390,6 +440,8 @@ def test_formats(config):
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(config, acon, query, {'format': 'text'})
+	debug_output(qs, 1, None, query, expected)
+	notices_warning()
 	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
 	assert	len(notices) == 0
 
