@@ -982,7 +982,8 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	foreach(iter, pworkers)
 	{
 		PGPROC 	*proc = (PGPROC *) lfirst(iter);
-		Assert (proc && proc->pid);
+		if (!proc || !proc->pid)
+			continue;
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
 									proc->backendId);
