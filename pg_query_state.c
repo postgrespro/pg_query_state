@@ -618,6 +618,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 						shm_mq_msg	*msg = (shm_mq_msg *) lfirst(i);
 						proc_state	*p_state = (proc_state *) palloc(sizeof(proc_state));
 
+						if (msg->result_code != QS_RETURNED)
+							continue;
+
+						AssertState(msg->result_code == QS_RETURNED);
+
 						qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
 
 						p_state->proc = msg->proc;
@@ -856,7 +861,12 @@ SendBgWorkerPids(void)
 	msg->number = list_length(all_workers);
 	i = 0;
 	foreach(iter, all_workers)
-		msg->pids[i++] = lfirst_int(iter);
+	{
+		pid_t current_pid = lfirst_int(iter);
+
+		AssertState(current_pid > 0);
+		msg->pids[i++] = current_pid;
+	}
 
 	shm_mq_send(mqh, msg_len, msg, false);
 }
@@ -894,9 +904,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 	for (i = 0; i < msg->number; i++)
 	{
-		pid_t 	 pid = msg->pids[i];
-		PGPROC	*proc = BackendPidGetProc(pid);
-
+		pid_t	pid = msg->pids[i];
+		PGPROC *proc = BackendPidGetProc(pid);
+		if (!proc || !proc->pid)
+			continue;
 		result = lcons(proc, result);
 	}
 
@@ -971,7 +982,8 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	foreach(iter, pworkers)
 	{
 		PGPROC 	*proc = (PGPROC *) lfirst(iter);
-
+		if (!proc || !proc->pid)
+			continue;
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
 									proc->backendId);
