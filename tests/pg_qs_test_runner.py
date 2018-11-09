@@ -5,17 +5,11 @@ Copyright (c) 2016-2016, Postgres Professional
 '''
 
 import argparse
-import psycopg2
 import sys
 from test_cases import *
-
-class PasswordPromptAction(argparse.Action):
-	def __call__(self, parser, args, values, option_string=None):
-		password = getpass.getpass()
-		setattr(args, self.dest, password)
+import testgres
 
 class SetupException(Exception): pass
-class TeardownException(Exception): pass
 
 setup_cmd = [
 	'drop extension if exists pg_query_state cascade',
@@ -25,15 +19,9 @@ setup_cmd = [
 	'create table foo(c1 integer, c2 text)',
 	'create table bar(c1 integer, c2 boolean)',
 	'insert into foo select i, md5(random()::text) from generate_series(1, 1000000) as i',
-	'insert into bar select i, i%2=1 from generate_series(1, 500000) as i',
+	'insert into bar select i, i%%2=1 from generate_series(1, 500000) as i',
 	'analyze foo',
 	'analyze bar',
-	]
-
-teardown_cmd = [
-	'drop table foo cascade',
-	'drop table bar cascade',
-	'drop extension pg_query_state cascade',
 	]
 
 tests = [
@@ -50,36 +38,26 @@ tests = [
         test_insert_on_conflict,
         ]
 
-def setup(con):
+def setup(node):
 	''' Creates pg_query_state extension, creates tables for tests, fills it with data '''
 	print 'setting up...'
+	conn = testgres.connection.NodeConnection(node)
 	try:
-		cur = con.cursor()
 		for cmd in setup_cmd:
-			cur.execute(cmd)
-		con.commit()
-		cur.close()
+			conn.execute(cmd)
+		conn.commit()
+		conn.close()
 	except Exception, e:
 		raise SetupException('Setup failed: %s' % e)
 	print 'done!'
 
-def teardown(con):
-	''' Drops table and extension '''
-	print 'tearing down...'
-	try:
-		cur = con.cursor()
-		for cmd in teardown_cmd:
-			cur.execute(cmd)
-		con.commit()
-		cur.close()
-	except Exception, e:
-		raise TeardownException('Teardown failed: %s' % e)
-	print 'done!'
-
-def main(config):
+def main(args):
 	''' Main test function '''
-	con = psycopg2.connect(**config)
-	setup(con)
+	node = testgres.get_new_node()
+	node.init()
+	node.append_conf("shared_preload_libraries='pg_query_state'\n")
+	node.start()
+	setup(node)
 
 	for i, test in enumerate(tests):
 		if test.__doc__:
@@ -87,18 +65,21 @@ def main(config):
 		else:
 			descr = 'test case %d' % (i+1)
 		print ("%s..." % descr),; sys.stdout.flush()
-		test(config)
+		test(node)
 		print 'ok!'
 
-	teardown(con)
-	con.close()
+	if args.stress:
+		print 'Start stress test'
+		stress_test(node)
+		print 'Start stress finished successfully'
+	print 'stop'
+
+	node.stop()
+	node.cleanup()
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Query state of running backends tests')
-	parser.add_argument('--host', default='localhost', help='postgres server host')
-	parser.add_argument('--port', type=int, default=5432, help='postgres server port')
-	parser.add_argument('--user', dest='user', default='postgres', help='user name')
-	parser.add_argument('--database', dest='database', default='postgres', help='database name')
-	parser.add_argument('--password', dest='password', nargs=0, action=PasswordPromptAction, default='')
+	parser.add_argument('--stress', help='run stress test using tpc-ds benchmark',
+						action="store_true")
 	args = parser.parse_args()
-	main(args.__dict__)
+	main(args)
