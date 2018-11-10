@@ -144,8 +144,9 @@ if [ -f regression.diffs ]; then cat regression.diffs; fi
 
 # run python tests
 set +x -e
-virtualenv /tmp/env && source /tmp/env/bin/activate &&
-pip install PyYAML && pip install psycopg2
+virtualenv /tmp/env && source /tmp/env/bin/activate 
+pip install PyYAML
+pip install testgres
 set -e #exit virtualenv with error code
 if [ "$LEVEL" = "stress" ]; then
 	python tests/pg_qs_test_runner.py --stress

@@ -53,7 +53,7 @@ class AsyncQueryExecutor():
 							   args=(self.conn, query, multiple, self.res_q, self.condition))
 		self.process.start()
 		self.condition.acquire()
-		self.condition.wait()
+		self.condition.wait(5)
 
 	def wait(self):
 		self.result = self.res_q.get()
@@ -135,7 +135,7 @@ def debug_output(qs, qs_len, pid, query, expected, expected2 = None):
 	if (qs_len == 2 and expected2 and
 		not (re.match(expected2, qs[1][3]))):
 		print "qs[1][3]:\n", qs[1][3]
-		print "Expected:\n", expected
+		print "Expected:\n", expected2
 		something_happened = True
 	if (qs[0][4] != None):
 		print "qs[0][4]: ", qs[0][4], "Expected: None"
@@ -181,8 +181,8 @@ def test_simple_query(node):
   ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
-        ->  Hash \(Current loop: actual rows=\d+, loop number=1\)
-              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+        ->  Hash \(Current loop: actual rows=\d+, loop number=1\)(
+              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(node, query)
@@ -242,12 +242,12 @@ def test_nested_call(node):
 	expected = 'Function Scan on n_join_foo_bar (Current loop: actual rows=0, loop number=1)'
 	expected_nested = r"""Result \(Current loop: actual rows=0, loop number=1\)
   InitPlan 1 \(returns \$0\)
-    ->  Aggregate \(Current loop: actual rows=0, loop number=1\)
-          ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+    ->  Aggregate \(Current loop: actual rows=\d+, loop number=1\)
+          ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
                 Hash Cond: \(foo.c1 = bar.c1\)
-                ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
-                ->  Hash \(Current loop: actual rows=0, loop number=1\)
-                      Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+                ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
+                ->  Hash \(Current loop: actual rows=\d+, loop number=1\)(
+                      Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
                       ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	conn.execute(create_function)
@@ -282,7 +282,7 @@ def test_insert_on_conflict(node):
 	util_conn.commit()
 
 	qs = query_state(node, query)
-	debug_output(qs, 1, None, query, expected)
+	debug_output(qs, None, None, query, expected)
 	assert re.match(expected, qs[0][3])
 
 	util_conn.execute(drop_field_uniqueness)
@@ -317,10 +317,10 @@ def test_trigger(node):
 	util_conn.commit()
 
 	qs = query_state(node, query, {'triggers': True}, delay = 1)
-	debug_output(qs, 2, None, query, expected_upper+'\n'+ trigger_suffix)
+	debug_output(qs, None, None, query, expected_upper+'\n'+ trigger_suffix)
 	assert re.match(expected_upper+'\n'+ trigger_suffix, qs[0][3])
 	qs = query_state(node, query, {'triggers': False})
-	debug_output(qs, 1, None, query, expected_upper)
+	debug_output(qs, None, None, query, expected_upper)
 	assert re.match(expected_upper, qs[0][3])
 
 	util_conn.execute(drop_temps)
@@ -331,11 +331,11 @@ def test_costs(node):
 
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 	expected = r"""Aggregate  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=8\) \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=0, loop number=1\)
+  ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1, loop number=1\)
-        ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=0, loop number=1\)
-              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)
+        ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)(
+              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(node, query, {'costs': True})
@@ -348,14 +348,14 @@ def test_buffers(config):
 
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
-              Buffers: [^\n]*
-        ->  Hash \(Current loop: actual rows=0, loop number=1\)
-              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
-              ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)
-                    Buffers: .*"""
+        ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)(
+              Buffers: [^\n]*)?
+        ->  Hash \(Current loop: actual rows=\d+, loop number=1\)(
+              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
+              ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)(
+                    Buffers: .*)?"""
 
 	qs = query_state(config, query, {'buffers': True},
 					 gucs = {'pg_query_state.enable_buffers' : 'on'})
@@ -367,10 +367,10 @@ def test_timing(node):
 
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 	expected = r"""Aggregate \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
+  ->  Hash Join \(Current loop: running time=\d+.\d+ actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         ->  Seq Scan on foo \(Current loop: (actual|running) time=\d+.\d+(..\d+.\d+)? (actual )?rows=\d+, loop number=1\)
-        ->  Hash \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)(
+        ->  Hash \(Current loop: running time=\d+.\d+ actual rows=\d+, loop number=1\)(
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
               ->  Seq Scan on bar \(Current loop: (actual|running) time=\d+.\d+(..\d+.\d+)* (actual )*rows=\d+, loop number=1\)"""
 
@@ -403,12 +403,12 @@ def test_formats(config):
 	"""test all formats of pg_query_state output"""
 
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
-	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+	expected = r"""Aggregate \(Current loop: actual rows=\d+, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
-        ->  Hash \(Current loop: actual rows=0, loop number=1\)
-              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+        ->  Seq Scan on foo \(Current loop: actual rows=\d, loop number=1\)
+        ->  Hash \(Current loop: actual rows=\d+, loop number=1\)(
+              Buckets: \d+  Batches: \d+  Memory Usage: \d+kB)?
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
 	qs = query_state(config, query, {'format': 'text'})
@@ -489,7 +489,7 @@ def load_tpcds_data(node):
 def stress_test(node):
 	"""stress test"""
 	load_tpcds_data(node)
-
+	print 'Test running...'
 	# execute query in separate thread 
 	async_psql = AsyncQueryExecutor(node)
 	sql = open("tests/query_tpcds.sql",'r').read()
