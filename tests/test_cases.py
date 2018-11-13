@@ -1,4 +1,5 @@
 import testgres
+import psycopg2.extensions
 import json
 import re
 import time
@@ -8,6 +9,9 @@ from time import sleep
 from multiprocessing import Process, Queue, Condition
 import subprocess
 import os
+import progressbar
+
+class SQLExecuteException(Exception): pass
 
 class AsyncQueryExecutor():
 	""" Run query in separate process """
@@ -21,36 +25,45 @@ class AsyncQueryExecutor():
 		self.condition = Condition()
 		self.result = []
 
-	def run_internal(self, conn, query, multiple, res_q, condition):
+	def run_internal(self, conn, query, res_q, condition):
 		condition.acquire()
-		commands = []
-		if multiple:
-			commands = query.split(';')
-			for i, cmd in enumerate(query.split(';')):
-				if (len(cmd.strip()) == 0):
-					del commands[i]
-		else:
-			commands.append(query)
-
 		conn.begin()
 		condition.notify()
 		condition.release()
-		for cmd in commands:
-			try:
-				res = conn.execute(cmd)
-				res_q.put(res)
-				conn.commit()
-			except Exception, e:
-				print 'Unable to execute query: "', cmd ,'"'
-				print 'Reason: %s' %e
-				conn.rollback()
-				continue
+		try:
+			res = conn.execute(query)
+			res_q.put(res)
+			conn.commit()
+		except Exception, e:
+			conn.rollback()
+			print 'Unable to execute query: "', query ,'"'
+			raise SQLExecuteException(
+				'Unable to execute query: "%s"\nReason: %s' %(query, e))
 		return
+
+	def run_stress(self, conn, query, condition):
+		condition.acquire()
+		condition.notify()
+		condition.release()
+		i = 1
+		try:
+			conn.begin()
+			conn.execute(query)
+			conn.commit()
+		except psycopg2.extensions.QueryCanceledError:
+			pass
+		except Exception, e:
+			print "Unable to execute: %s" %query
+			print "Reason: %s" %e
 
 	def run(self, query, multiple = False):
 		"""Run async query"""
-		self.process = Process(target=self.run_internal,
-							   args=(self.conn, query, multiple, self.res_q, self.condition))
+		if multiple:
+			self.process = Process(target=self.run_stress,
+							args=(self.conn, query, self.condition))
+		else:
+			self.process = Process(target=self.run_internal,
+							args=(self.conn, query, self.res_q, self.condition))
 		self.process.start()
 		self.condition.acquire()
 		self.condition.wait(5)
@@ -61,13 +74,15 @@ class AsyncQueryExecutor():
 			self.process.join()
 
 	def terminate(self):
-		if self.process.is_alive():
+		if self.node.pid:
 			self.node.psql("SELECT pg_cancel_backend(%d)" % self.backend_pid)
+		if self.process.is_alive():
 			self.process.terminate()
 
 	def close(self):
 		self.terminate()
-		self.conn.close()
+		if self.node.pid:
+			self.conn.close()
 
 def pqs_args(pid, verbose=False, costs=False, timing=False,
 			 buffers=False, triggers=False, format='text'):
@@ -469,8 +484,6 @@ class StressTestException(Exception): pass
 def load_tpcds_data(node):
 	print 'Load tpcds...'
 	subprocess.call(['./tests/prepare_stress.sh'])
-	tables = open('tmp_stress/tpcds-kit/tools/tpcds.sql', 'r')
-	tables_sql = tables.read()
 	try:
 		# Create tables
 		node.psql(filename="tmp_stress/tpcds-kit/tools/tpcds.sql")
@@ -491,21 +504,31 @@ def stress_test(node):
 	load_tpcds_data(node)
 	print 'Test running...'
 	# execute query in separate thread 
-	async_psql = AsyncQueryExecutor(node)
-	sql = open("tests/query_tpcds.sql",'r').read()
-	aq = AsyncQueryExecutor(node)
-	aq.run(sql, True)
+	with open("tests/query_tpcds.sql",'r') as f:
+		sql = f.read()
+	commands = sql.split(';')
+	for i, cmd in enumerate(sql.split(';')):
+		if (len(cmd.strip()) == 0):
+			del commands[i]
 
-	conn = testgres.connection.NodeConnection(node)
-	while aq.process.is_alive():
+	timeout_list = []
+	bar = progressbar.ProgressBar(max_value=len(commands))
+	for i, cmd in enumerate(commands):
+		bar.update(i+1)
 		try:
-			conn.execute('SELECT * FROM pg_query_state(%d)' % aq.backend_pid)
-		except Exception, e:
-			async_psql_ex = AsyncQueryExecutor(node)
-			async_psql_ex.run('SELECT state, query FROM pg_stat_activity where pid = %d;' % aq.backend_pid)
-			async_psql_ex.wait()
-			print 'pg_query_state FAILED'
-			print 'state of backend:'
-			print async_psql_ex.result
-			raise StressTestException('Unable to get query state: %s' % e)
-	aq.close()
+			conn = testgres.connection.NodeConnection(node)
+			aq = AsyncQueryExecutor(node)
+			# set query timeout to 10 sec 
+			set_guc(aq.conn, 'statement_timeout', 10000)
+			set_guc(conn, 'statement_timeout', 10000)
+			aq.run(cmd, True)
+			while aq.process.is_alive() and node.pid:
+				conn.execute('SELECT * FROM pg_query_state(%d)' % aq.backend_pid)
+		#TODO: Put here testgres exception when supported
+		except psycopg2.extensions.QueryCanceledError:
+			timeout_list.append(i)
+		finally:
+			aq.close()
+			conn.close()
+		if len(timeout_list) > 0:
+			print 'It was pg_query_state timeouts(10s) on queries: ', timeout_list

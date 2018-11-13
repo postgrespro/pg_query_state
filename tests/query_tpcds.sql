@@ -248,7 +248,7 @@ with ssr as
      store
  where date_sk = d_date_sk
        and d_date between cast('2000-08-19' as date) 
-                  and (cast('2000-08-19' as date) +  14 days)
+                  and (cast('2000-08-19' as date) + interval '14 days')
        and store_sk = s_store_sk
  group by s_store_id)
  ,
@@ -279,7 +279,7 @@ with ssr as
      catalog_page
  where date_sk = d_date_sk
        and d_date between cast('2000-08-19' as date)
-                  and (cast('2000-08-19' as date) +  14 days)
+                  and (cast('2000-08-19' as date) + interval '14 days')
        and page_sk = cp_catalog_page_sk
  group by cp_catalog_page_id)
  ,
@@ -312,7 +312,7 @@ with ssr as
      web_site
  where date_sk = d_date_sk
        and d_date between cast('2000-08-19' as date)
-                  and (cast('2000-08-19' as date) +  14 days)
+                  and (cast('2000-08-19' as date) + interval '14 days')
        and wsr_web_site_sk = web_site_sk
  group by web_site_id)
   select  channel
@@ -712,7 +712,7 @@ where
   	and i_category in ('Men', 'Books', 'Electronics')
   	and ws_sold_date_sk = d_date_sk
 	and d_date between cast('2001-06-15' as date) 
-				and (cast('2001-06-15' as date) + 30 days)
+				and (cast('2001-06-15' as date) + interval '30 days')
 group by 
 	i_item_id
         ,i_item_desc 
@@ -812,7 +812,7 @@ with  cross_items as
      ,date_dim d3
  where ws_item_sk = iws.i_item_sk
    and ws_sold_date_sk = d3.d_date_sk
-   and d3.d_year between 1999 AND 1999 + 2)
+   and d3.d_year between 1999 AND 1999 + 2) as sub
  where i_brand_id = brand_id
       and i_class_id = class_id
       and i_category_id = category_id
@@ -838,7 +838,7 @@ with  cross_items as
        from web_sales
            ,date_dim
        where ws_sold_date_sk = d_date_sk
-         and d_year between 1999 and 1999 + 2) x)
+         and d_year between 1999 and 1999 + 2) as x)
   select  channel, i_brand_id,i_class_id,i_category_id,sum(sales), sum(number_sales)
  from(
        select 'store' channel, i_brand_id,i_class_id
@@ -882,6 +882,7 @@ with  cross_items as
  group by rollup (channel, i_brand_id,i_class_id,i_category_id)
  order by channel,i_brand_id,i_class_id,i_category_id
  limit 100;
+
 with  cross_items as
  (select i_item_sk ss_item_sk
  from item,
@@ -913,7 +914,7 @@ with  cross_items as
      ,date_dim d3
  where ws_item_sk = iws.i_item_sk
    and ws_sold_date_sk = d3.d_date_sk
-   and d3.d_year between 1999 AND 1999 + 2) x
+   and d3.d_year between 1999 AND 1999 + 2) as x
  where i_brand_id = brand_id
       and i_class_id = class_id
       and i_category_id = category_id
@@ -939,7 +940,7 @@ with  cross_items as
        from web_sales
            ,date_dim
        where ws_sold_date_sk = d_date_sk
-         and d_year between 1999 and 1999 + 2) x)
+         and d_year between 1999 and 1999 + 2) as x)
   select  this_year.channel ty_channel
                            ,this_year.i_brand_id ty_brand
                            ,this_year.i_class_id ty_class
@@ -1022,7 +1023,7 @@ from
   ,call_center
 where
     d_date between '2002-4-01' and 
-           (cast('2002-4-01' as date) + 60 days)
+           (cast('2002-4-01' as date) + interval '60 days')
 and cs1.cs_ship_date_sk = d_date_sk
 and cs1.cs_ship_addr_sk = ca_address_sk
 and ca_state = 'PA'
@@ -1161,7 +1162,7 @@ select  i_item_id
    and i_category in ('Books', 'Music', 'Sports')
    and cs_sold_date_sk = d_date_sk
  and d_date between cast('2002-06-18' as date) 
- 				and (cast('2002-06-18' as date) + 30 days)
+ 				and (cast('2002-06-18' as date) + interval '30 days')
  group by i_item_id
          ,i_item_desc 
          ,i_category
@@ -1193,8 +1194,8 @@ select  *
      and i_item_sk          = inv_item_sk
      and inv_warehouse_sk   = w_warehouse_sk
      and inv_date_sk    = d_date_sk
-     and d_date between (cast ('1999-06-22' as date) - 30 days)
-                    and (cast ('1999-06-22' as date) + 30 days)
+     and d_date between (cast ('1999-06-22' as date) - interval '30 days')
+                    and (cast ('1999-06-22' as date) + interval '30 days')
    group by w_warehouse_name, i_item_id) x
  where (case when inv_before > 0 
              then inv_after / inv_before 
@@ -1238,14 +1239,15 @@ with frequent_ss_items as
   having count(*) >4),
  max_store_sales as
  (select max(csales) tpcds_cmax 
-  from (select c_customer_sk,sum(ss_quantity*ss_sales_price) csales
+  from (select c_customer_sk,sum(ss_quantity*ss_sales_price) as csales
         from store_sales
             ,customer
             ,date_dim 
         where ss_customer_sk = c_customer_sk
          and ss_sold_date_sk = d_date_sk
          and d_year in (2000,2000+1,2000+2,2000+3) 
-        group by c_customer_sk)),
+        group by c_customer_sk) as scsales
+        ),
  best_ss_customer as
  (select c_customer_sk,sum(ss_quantity*ss_sales_price) ssales
   from store_sales
@@ -1273,8 +1275,9 @@ from
          and d_moy = 7 
          and ws_sold_date_sk = d_date_sk 
          and ws_item_sk in (select item_sk from frequent_ss_items)
-         and ws_bill_customer_sk in (select c_customer_sk from best_ss_customer)) 
+         and ws_bill_customer_sk in (select c_customer_sk from best_ss_customer)) as foo 
  limit 100;
+
 with frequent_ss_items as
  (select substr(i_item_desc,1,30) itemdesc,i_item_sk item_sk,d_date solddate,count(*) cnt
   from store_sales
@@ -1294,7 +1297,7 @@ with frequent_ss_items as
         where ss_customer_sk = c_customer_sk
          and ss_sold_date_sk = d_date_sk
          and d_year in (2000,2000+1,2000+2,2000+3)
-        group by c_customer_sk)),
+        group by c_customer_sk) as scsales),
  best_ss_customer as
  (select c_customer_sk,sum(ss_quantity*ss_sales_price) ssales
   from store_sales
@@ -1327,7 +1330,7 @@ with frequent_ss_items as
          and ws_item_sk in (select item_sk from frequent_ss_items)
          and ws_bill_customer_sk in (select c_customer_sk from best_ss_customer)
          and ws_bill_customer_sk = c_customer_sk
-       group by c_last_name,c_first_name) 
+       group by c_last_name,c_first_name) as sub 
      order by c_last_name,c_first_name,sales
   limit 100;
 
@@ -1724,7 +1727,7 @@ where
 i_manufact_id = 722
 and i_item_sk = cs_item_sk 
 and d_date between '2001-03-09' and 
-        (cast('2001-03-09' as date) + 90 days)
+        (cast('2001-03-09' as date) + interval '90 days')
 and d_date_sk = cs_sold_date_sk 
 and cs_ext_discount_amt  
      > ( 
@@ -1736,7 +1739,7 @@ and cs_ext_discount_amt
          where 
               cs_item_sk = i_item_sk 
           and d_date between '2001-03-09' and
-                             (cast('2001-03-09' as date) + 90 days)
+                             (cast('2001-03-09' as date) + interval '90 days')
           and d_date_sk = cs_sold_date_sk 
       ) 
 limit 100;
@@ -1944,7 +1947,7 @@ select  i_item_id
  where i_current_price between 29 and 29 + 30
  and inv_item_sk = i_item_sk
  and d_date_sk=inv_date_sk
- and d_date between cast('2002-03-29' as date) and (cast('2002-03-29' as date) +  60 days)
+ and d_date between cast('2002-03-29' as date) and (cast('2002-03-29' as date) + interval '60 days')
  and i_manufact_id in (705,742,777,944)
  and inv_quantity_on_hand between 100 and 500
  and cs_item_sk = i_item_sk
@@ -2050,8 +2053,8 @@ select
  and i_item_sk          = cs_item_sk
  and cs_warehouse_sk    = w_warehouse_sk 
  and cs_sold_date_sk    = d_date_sk
- and d_date between (cast ('2001-05-02' as date) - 30 days)
-                and (cast ('2001-05-02' as date) + 30 days) 
+ and d_date between (cast ('2001-05-02' as date) - interval '30 days')
+                and (cast ('2001-05-02' as date) + interval '30 days') 
  group by
     w_state,i_item_id
  order by w_state,i_item_id
@@ -2395,7 +2398,7 @@ select  channel, item, return_ratio, return_rank, currency_rank from
                          and d_moy = 11
  		group by ws.ws_item_sk
  	) in_web
- ) web
+ ) as web
  where 
  (
  web.return_rank <= 10
@@ -2438,7 +2441,7 @@ select  channel, item, return_ratio, return_rank, currency_rank from
                          and d_moy = 11
                  group by cs.cs_item_sk
  	) in_cat
- ) catalog
+ ) as catalog
  where 
  (
  catalog.return_rank <= 10
@@ -2477,13 +2480,13 @@ select  channel, item, return_ratio, return_rank, currency_rank from
                          and d_moy = 11
  		group by sts.ss_item_sk
  	) in_store
- ) store
+ ) as store
  where  (
  store.return_rank <= 10
  or 
  store.currency_rank <= 10
  )
- )
+ )as tab
  order by 1,4,5,2
  limit 100;
 
@@ -3927,7 +3930,7 @@ with ss as
       store
  where ss_sold_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date) 
-                  and (cast('2000-08-10' as date) +  30 days) 
+                  and (cast('2000-08-10' as date) + interval '30 days') 
        and ss_store_sk = s_store_sk
  group by s_store_sk)
  ,
@@ -3940,7 +3943,7 @@ with ss as
       store
  where sr_returned_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date)
-                  and (cast('2000-08-10' as date) +  30 days)
+                  and (cast('2000-08-10' as date) + interval '30 days')
        and sr_store_sk = s_store_sk
  group by s_store_sk), 
  cs as
@@ -3951,7 +3954,7 @@ with ss as
       date_dim
  where cs_sold_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date)
-                  and (cast('2000-08-10' as date) +  30 days)
+                  and (cast('2000-08-10' as date) + interval '30 days')
  group by cs_call_center_sk 
  ), 
  cr as
@@ -3962,7 +3965,7 @@ with ss as
       date_dim
  where cr_returned_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date)
-                  and (cast('2000-08-10' as date) +  30 days)
+                  and (cast('2000-08-10' as date) + interval '30 days')
  group by cr_call_center_sk
  ), 
  ws as
@@ -3974,7 +3977,7 @@ with ss as
       web_page
  where ws_sold_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date)
-                  and (cast('2000-08-10' as date) +  30 days)
+                  and (cast('2000-08-10' as date) + interval '30 days')
        and ws_web_page_sk = wp_web_page_sk
  group by wp_web_page_sk), 
  wr as
@@ -3986,7 +3989,7 @@ with ss as
       web_page
  where wr_returned_date_sk = d_date_sk
        and d_date between cast('2000-08-10' as date)
-                  and (cast('2000-08-10' as date) +  30 days)
+                  and (cast('2000-08-10' as date) + interval '30 days')
        and wr_web_page_sk = wp_web_page_sk
  group by wp_web_page_sk)
   select  channel
@@ -4014,7 +4017,7 @@ with ss as
  select 'web channel' as channel
         , ws.wp_web_page_sk as id
         , sales
-        , coalesce(returns, 0) returns
+        , coalesce(returns, 0) as returns
         , (profit - coalesce(profit_loss,0)) as profit
  from   ws left join wr
         on  ws.wp_web_page_sk = wr.wp_web_page_sk
@@ -4120,7 +4123,7 @@ with ssr as
      promotion
  where ss_sold_date_sk = d_date_sk
        and d_date between cast('2002-08-14' as date) 
-                  and (cast('2002-08-14' as date) +  30 days)
+                  and (cast('2002-08-14' as date) + interval '30 days')
        and ss_store_sk = s_store_sk
        and ss_item_sk = i_item_sk
        and i_current_price > 50
@@ -4141,7 +4144,7 @@ with ssr as
      promotion
  where cs_sold_date_sk = d_date_sk
        and d_date between cast('2002-08-14' as date)
-                  and (cast('2002-08-14' as date) +  30 days)
+                  and (cast('2002-08-14' as date) + interval '30 days')
         and cs_catalog_page_sk = cp_catalog_page_sk
        and cs_item_sk = i_item_sk
        and i_current_price > 50
@@ -4162,7 +4165,7 @@ group by cp_catalog_page_id)
      promotion
  where ws_sold_date_sk = d_date_sk
        and d_date between cast('2002-08-14' as date)
-                  and (cast('2002-08-14' as date) +  30 days)
+                  and (cast('2002-08-14' as date) + interval '30 days')
         and ws_web_site_sk = web_site_sk
        and ws_item_sk = i_item_sk
        and i_current_price > 50
@@ -4241,7 +4244,7 @@ select  i_item_id
  where i_current_price between 58 and 58+30
  and inv_item_sk = i_item_sk
  and d_date_sk=inv_date_sk
- and d_date between cast('2001-01-13' as date) and (cast('2001-01-13' as date) +  60 days)
+ and d_date between cast('2001-01-13' as date) and (cast('2001-01-13' as date) + interval '60 days')
  and i_manufact_id in (259,559,580,485)
  and inv_quantity_on_hand between 100 and 500
  and ss_item_sk = i_item_sk
@@ -4657,7 +4660,7 @@ where
 i_manufact_id = 714
 and i_item_sk = ws_item_sk 
 and d_date between '2000-02-01' and 
-        (cast('2000-02-01' as date) + 90 days)
+        (cast('2000-02-01' as date) + interval '90 days')
 and d_date_sk = ws_sold_date_sk 
 and ws_ext_discount_amt  
      > ( 
@@ -4669,7 +4672,7 @@ and ws_ext_discount_amt
          WHERE 
               ws_item_sk = i_item_sk 
           and d_date between '2000-02-01' and
-                             (cast('2000-02-01' as date) + 90 days)
+                             (cast('2000-02-01' as date) + interval '90 days')
           and d_date_sk = ws_sold_date_sk 
       ) 
 order by sum(ws_ext_discount_amt)
@@ -4706,7 +4709,7 @@ from
   ,web_site
 where
     d_date between '2002-5-01' and 
-           (cast('2002-5-01' as date) + 60 days)
+           (cast('2002-5-01' as date) + interval '60 days')
 and ws1.ws_ship_date_sk = d_date_sk
 and ws1.ws_ship_addr_sk = ca_address_sk
 and ca_state = 'OK'
@@ -4740,7 +4743,7 @@ from
   ,web_site
 where
     d_date between '2001-4-01' and 
-           (cast('2001-4-01' as date) + 60 days)
+           (cast('2001-4-01' as date) + interval '60 days')
 and ws1.ws_ship_date_sk = d_date_sk
 and ws1.ws_ship_addr_sk = ca_address_sk
 and ca_state = 'VA'
@@ -4814,7 +4817,7 @@ where
   	and i_category in ('Men', 'Sports', 'Jewelry')
   	and ss_sold_date_sk = d_date_sk
 	and d_date between cast('1999-02-05' as date) 
-				and (cast('1999-02-05' as date) + 30 days)
+				and (cast('1999-02-05' as date) + interval '60 days')
 group by 
 	i_item_id
         ,i_item_desc 
