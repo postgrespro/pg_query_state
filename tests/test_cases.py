@@ -507,7 +507,8 @@ def stress_test(node):
 	with open("tests/query_tpcds.sql",'r') as f:
 		sql = f.read()
 	commands = sql.split(';')
-	for i, cmd in enumerate(sql.split(';')):
+	for i, cmd in enumerate(commands):
+		commands[i] = cmd.replace('%','%%')
 		if (len(cmd.strip()) == 0):
 			del commands[i]
 
@@ -530,5 +531,5 @@ def stress_test(node):
 		finally:
 			aq.close()
 			conn.close()
-		if len(timeout_list) > 0:
-			print 'It was pg_query_state timeouts(10s) on queries: ', timeout_list
+	if len(timeout_list) > 0:
+		print 'It was pg_query_state timeouts(10s) on queries: ', timeout_list
