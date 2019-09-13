@@ -50,7 +50,6 @@ bool pg_qs_buffers = false;
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ExecutorRun_hook_type prev_ExecutorRun = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
-static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 void		_PG_init(void);
@@ -65,7 +64,6 @@ static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
 						   uint64 count, bool execute_once);
 #endif
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
-static void qs_ExecutorEnd(QueryDesc *queryDesc);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
@@ -249,8 +247,6 @@ _PG_init(void)
 	ExecutorRun_hook = qs_ExecutorRun;
 	prev_ExecutorFinish = ExecutorFinish_hook;
 	ExecutorFinish_hook = qs_ExecutorFinish;
-	prev_ExecutorEnd = ExecutorEnd_hook;
-	ExecutorEnd_hook = qs_ExecutorEnd;
 	prev_shmem_startup_hook = shmem_startup_hook;
 	shmem_startup_hook = pg_qs_shmem_startup;
 }
@@ -271,7 +267,6 @@ _PG_fini(void)
 	ExecutorStart_hook = prev_ExecutorStart;
 	ExecutorRun_hook = prev_ExecutorRun;
 	ExecutorFinish_hook = prev_ExecutorFinish;
-	ExecutorEnd_hook = prev_ExecutorEnd;
 	shmem_startup_hook = prev_shmem_startup_hook;
 }
 
@@ -283,32 +278,20 @@ _PG_fini(void)
 static void
 qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
-	PG_TRY();
+	/* Enable per-node instrumentation */
+	if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
 	{
-		/* Enable per-node instrumentation */
-		if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
-		{
-			queryDesc->instrument_options |= INSTRUMENT_ROWS;
-			if (pg_qs_timing)
-				queryDesc->instrument_options |= INSTRUMENT_TIMER;
-			if (pg_qs_buffers)
-				queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
-		}
-
-		if (prev_ExecutorStart)
-			prev_ExecutorStart(queryDesc, eflags);
-		else
-			standard_ExecutorStart(queryDesc, eflags);
-
-		/* push structure about current query in global stack */
-		QueryDescStack = lcons(queryDesc, QueryDescStack);
+		queryDesc->instrument_options |= INSTRUMENT_ROWS;
+		if (pg_qs_timing)
+			queryDesc->instrument_options |= INSTRUMENT_TIMER;
+		if (pg_qs_buffers)
+			queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
 	}
-	PG_CATCH();
-	{
-		QueryDescStack = NIL;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
+
+	if (prev_ExecutorStart)
+		prev_ExecutorStart(queryDesc, eflags);
+	else
+		standard_ExecutorStart(queryDesc, eflags);
 }
 
 /*
@@ -323,6 +306,8 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 			   bool execute_once)
 #endif
 {
+	QueryDescStack = lcons(queryDesc, QueryDescStack);
+
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
@@ -335,10 +320,11 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 		else
 			standard_ExecutorRun(queryDesc, direction, count, execute_once);
 #endif
+		QueryDescStack = list_delete_first(QueryDescStack);
 	}
 	PG_CATCH();
 	{
-		QueryDescStack = NIL;
+		QueryDescStack = list_delete_first(QueryDescStack);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -351,40 +337,19 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 static void
 qs_ExecutorFinish(QueryDesc *queryDesc)
 {
+	QueryDescStack = lcons(queryDesc, QueryDescStack);
+
 	PG_TRY();
 	{
 		if (prev_ExecutorFinish)
 			prev_ExecutorFinish(queryDesc);
 		else
 			standard_ExecutorFinish(queryDesc);
+		QueryDescStack = list_delete_first(QueryDescStack);
 	}
 	PG_CATCH();
-	{
-		QueryDescStack = NIL;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-}
-
-/*
- * ExecutorEnd hook:
- * 		pop current query description from global stack
- */
-static void
-qs_ExecutorEnd(QueryDesc *queryDesc)
-{
-	PG_TRY();
 	{
 		QueryDescStack = list_delete_first(QueryDescStack);
-
-		if (prev_ExecutorEnd)
-			prev_ExecutorEnd(queryDesc);
-		else
-			standard_ExecutorEnd(queryDesc);
-	}
-	PG_CATCH();
-	{
-		QueryDescStack = NIL;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
