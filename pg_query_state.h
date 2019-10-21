@@ -14,6 +14,7 @@
 
 #include "commands/explain.h"
 #include "nodes/pg_list.h"
+#include "storage/procarray.h"
 #include "storage/shm_mq.h"
 
 #define	QUEUE_SIZE			(16 * 1024)
@@ -67,6 +68,6 @@ extern pg_qs_params *params;
 extern shm_mq 	*mq;
 
 /* signal_handler.c */
-extern void SendQueryState(void);
+extern void SendQueryState(ProcSignalReason);
 
 #endif

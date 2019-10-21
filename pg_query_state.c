@@ -88,8 +88,8 @@ typedef struct
 	Latch	*caller;
 } RemoteUserIdResult;
 
-static void SendCurrentUserId(void);
-static void SendBgWorkerPids(void);
+static void SendCurrentUserId(ProcSignalReason);
+static void SendBgWorkerPids(ProcSignalReason);
 static Oid GetRemoteBackendUserId(PGPROC *proc);
 static List *GetRemoteBackendWorkers(PGPROC *proc);
 static List *GetRemoteBackendQueryStates(PGPROC *leader,
@@ -261,7 +261,6 @@ _PG_fini(void)
 
 	/* clear global state */
 	list_free(QueryDescStack);
-	AssignCustomProcSignalHandler(QueryStatePollReason, NULL);
 
 	/* Uninstall hooks. */
 	ExecutorStart_hook = prev_ExecutorStart;
@@ -605,7 +604,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 					funcctx->max_calls = max_calls;
 
 					/* Make tuple descriptor */
+#if PG_VERSION_NUM < 120000
 					tupdesc = CreateTemplateTupleDesc(N_ATTRS, false);
+#else
+					tupdesc = CreateTemplateTupleDesc(N_ATTRS);
+#endif
 					TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid", INT4OID, -1, 0);
 					TupleDescInitEntry(tupdesc, (AttrNumber) 2, "frame_number", INT4OID, -1, 0);
 					TupleDescInitEntry(tupdesc, (AttrNumber) 3, "query_text", TEXTOID, -1, 0);
@@ -659,7 +662,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 }
 
 static void
-SendCurrentUserId(void)
+SendCurrentUserId(ProcSignalReason reason)
 {
 	SpinLockAcquire(&counterpart_userid->mutex);
 	counterpart_userid->userid = GetUserId();
@@ -702,7 +705,8 @@ GetRemoteBackendUserId(PGPROC *proc)
 #if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
 #else
-		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
+				  PG_WAIT_EXTENSION);
 #endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
@@ -743,8 +747,9 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 #if PG_VERSION_NUM < 100000
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
 #else
-		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay,
-					   PG_WAIT_EXTENSION);
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT,
+					   delay, PG_WAIT_EXTENSION);
 #endif
 
 		INSTR_TIME_SET_CURRENT(cur_time);
@@ -800,7 +805,7 @@ typedef struct
 } BgWorkerPids;
 
 static void
-SendBgWorkerPids(void)
+SendBgWorkerPids(ProcSignalReason reason)
 {
 	ListCell 		*iter;
 	List 			*all_workers = NIL;
