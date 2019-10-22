@@ -154,7 +154,7 @@ serialize_stack(char *dest, List *qs_stack)
  * This function is called when fire custom signal QueryStatePollReason
  */
 void
-SendQueryState(ProcSignalReason reason)
+SendQueryState(void)
 {
 	shm_mq_handle 	*mqh;
 
@@ -166,6 +166,8 @@ SendQueryState(ProcSignalReason reason)
 
 #if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+#elif PG_VERSION_NUM < 120000
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_IPC);
 #else
 		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0, PG_WAIT_IPC);
 #endif

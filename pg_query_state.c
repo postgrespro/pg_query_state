@@ -88,8 +88,8 @@ typedef struct
 	Latch	*caller;
 } RemoteUserIdResult;
 
-static void SendCurrentUserId(ProcSignalReason);
-static void SendBgWorkerPids(ProcSignalReason);
+static void SendCurrentUserId(void);
+static void SendBgWorkerPids(void);
 static Oid GetRemoteBackendUserId(PGPROC *proc);
 static List *GetRemoteBackendWorkers(PGPROC *proc);
 static List *GetRemoteBackendQueryStates(PGPROC *leader,
@@ -662,7 +662,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 }
 
 static void
-SendCurrentUserId(ProcSignalReason reason)
+SendCurrentUserId(void)
 {
 	SpinLockAcquire(&counterpart_userid->mutex);
 	counterpart_userid->userid = GetUserId();
@@ -704,6 +704,8 @@ GetRemoteBackendUserId(PGPROC *proc)
 
 #if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+#elif PG_VERSION_NUM < 120000
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
 #else
 		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
 				  PG_WAIT_EXTENSION);
@@ -746,6 +748,10 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 
 #if PG_VERSION_NUM < 100000
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+#elif PG_VERSION_NUM < 120000
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_TIMEOUT,
+					   delay, PG_WAIT_EXTENSION);
 #else
 		rc = WaitLatch(MyLatch,
 					   WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT,
@@ -805,7 +811,7 @@ typedef struct
 } BgWorkerPids;
 
 static void
-SendBgWorkerPids(ProcSignalReason reason)
+SendBgWorkerPids(void)
 {
 	ListCell 		*iter;
 	List 			*all_workers = NIL;

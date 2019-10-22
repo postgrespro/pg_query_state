@@ -68,6 +68,6 @@ extern pg_qs_params *params;
 extern shm_mq 	*mq;
 
 /* signal_handler.c */
-extern void SendQueryState(ProcSignalReason);
+extern void SendQueryState(void);
 
 #endif

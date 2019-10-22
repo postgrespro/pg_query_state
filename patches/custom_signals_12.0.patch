@@ -1,17 +1,5 @@
-From 44e4d28abd0a63a6e1c4a75c55ad27fb827dbfa4 Mon Sep 17 00:00:00 2001
-From: Alexey Kondratov <kondratov.aleksey@gmail.com>
-Date: Fri, 18 Oct 2019 19:44:01 +0300
-Subject: [PATCH] [custom_signals] Allow extensions to set custom signal
- handlers
-
----
- src/backend/storage/ipc/procsignal.c | 94 ++++++++++++++++++++++++++++
- src/backend/tcop/postgres.c          |  2 +
- src/include/storage/procsignal.h     | 19 ++++++
- 3 files changed, 115 insertions(+)
-
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index 7605b2c3674..0802ed1119b 100644
+index 7605b2c367..6a4327fe76 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
 @@ -60,12 +60,20 @@ typedef struct
@@ -72,7 +60,7 @@ index 7605b2c3674..0802ed1119b 100644
  /*
   * SendProcSignal
   *		Send a signal to a Postgres process
-@@ -292,9 +330,65 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -292,9 +330,63 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -127,19 +115,17 @@ index 7605b2c3674..0802ed1119b 100644
 +		if (CustomSignalPendings[i])
 +		{
 +			ProcSignalHandler_type  handler;
-+			ProcSignalReason        reason;
 +
 +			CustomSignalPendings[i] = false;
 +			handler = CustomInterruptHandlers[i];
-+			reason = PROCSIG_CUSTOM_1 + i;
 +			if (handler != NULL)
-+				handler(reason);
++				handler();
 +		}
 +
 +	RESUME_INTERRUPTS();
 +}
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index c28cc370129..f5a48b98e86 100644
+index c28cc37012..f5a48b98e8 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
 @@ -3139,6 +3139,8 @@ ProcessInterrupts(void)
@@ -152,7 +138,7 @@ index c28cc370129..f5a48b98e86 100644
  
  
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index 05b186a05c2..84290d60975 100644
+index 05b186a05c..d961790b7e 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
 @@ -17,6 +17,8 @@
@@ -189,7 +175,7 @@ index 05b186a05c2..84290d60975 100644
  } ProcSignalReason;
  
 +/* Handler of custom process signal */
-+typedef void (*ProcSignalHandler_type) (ProcSignalReason reason);
++typedef void (*ProcSignalHandler_type) (void);
 +
  /*
   * prototypes for functions in procsignal.c
@@ -208,6 +194,3 @@ index 05b186a05c2..84290d60975 100644
  extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
  
  #endif							/* PROCSIGNAL_H */
--- 
-2.17.1
-
