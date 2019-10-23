@@ -12,7 +12,7 @@ EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
 	Dockerfile ./tests/*.pyc
 
 ifdef USE_PGXS
-PG_CONFIG = pg_config
+PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else

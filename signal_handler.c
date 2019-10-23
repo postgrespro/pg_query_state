@@ -166,8 +166,10 @@ SendQueryState(void)
 
 #if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-#else
+#elif PG_VERSION_NUM < 120000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_IPC);
+#else
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0, PG_WAIT_IPC);
 #endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);

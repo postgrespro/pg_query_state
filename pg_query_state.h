@@ -14,6 +14,7 @@
 
 #include "commands/explain.h"
 #include "nodes/pg_list.h"
+#include "storage/procarray.h"
 #include "storage/shm_mq.h"
 
 #define	QUEUE_SIZE			(16 * 1024)

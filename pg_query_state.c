@@ -50,7 +50,6 @@ bool pg_qs_buffers = false;
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ExecutorRun_hook_type prev_ExecutorRun = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
-static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 void		_PG_init(void);
@@ -65,7 +64,6 @@ static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
 						   uint64 count, bool execute_once);
 #endif
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
-static void qs_ExecutorEnd(QueryDesc *queryDesc);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
@@ -249,8 +247,6 @@ _PG_init(void)
 	ExecutorRun_hook = qs_ExecutorRun;
 	prev_ExecutorFinish = ExecutorFinish_hook;
 	ExecutorFinish_hook = qs_ExecutorFinish;
-	prev_ExecutorEnd = ExecutorEnd_hook;
-	ExecutorEnd_hook = qs_ExecutorEnd;
 	prev_shmem_startup_hook = shmem_startup_hook;
 	shmem_startup_hook = pg_qs_shmem_startup;
 }
@@ -265,13 +261,11 @@ _PG_fini(void)
 
 	/* clear global state */
 	list_free(QueryDescStack);
-	AssignCustomProcSignalHandler(QueryStatePollReason, NULL);
 
 	/* Uninstall hooks. */
 	ExecutorStart_hook = prev_ExecutorStart;
 	ExecutorRun_hook = prev_ExecutorRun;
 	ExecutorFinish_hook = prev_ExecutorFinish;
-	ExecutorEnd_hook = prev_ExecutorEnd;
 	shmem_startup_hook = prev_shmem_startup_hook;
 }
 
@@ -283,32 +277,20 @@ _PG_fini(void)
 static void
 qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
-	PG_TRY();
+	/* Enable per-node instrumentation */
+	if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
 	{
-		/* Enable per-node instrumentation */
-		if (pg_qs_enable && ((eflags & EXEC_FLAG_EXPLAIN_ONLY) == 0))
-		{
-			queryDesc->instrument_options |= INSTRUMENT_ROWS;
-			if (pg_qs_timing)
-				queryDesc->instrument_options |= INSTRUMENT_TIMER;
-			if (pg_qs_buffers)
-				queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
-		}
-
-		if (prev_ExecutorStart)
-			prev_ExecutorStart(queryDesc, eflags);
-		else
-			standard_ExecutorStart(queryDesc, eflags);
-
-		/* push structure about current query in global stack */
-		QueryDescStack = lcons(queryDesc, QueryDescStack);
+		queryDesc->instrument_options |= INSTRUMENT_ROWS;
+		if (pg_qs_timing)
+			queryDesc->instrument_options |= INSTRUMENT_TIMER;
+		if (pg_qs_buffers)
+			queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
 	}
-	PG_CATCH();
-	{
-		QueryDescStack = NIL;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
+
+	if (prev_ExecutorStart)
+		prev_ExecutorStart(queryDesc, eflags);
+	else
+		standard_ExecutorStart(queryDesc, eflags);
 }
 
 /*
@@ -323,6 +305,8 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 			   bool execute_once)
 #endif
 {
+	QueryDescStack = lcons(queryDesc, QueryDescStack);
+
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
@@ -335,10 +319,11 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 		else
 			standard_ExecutorRun(queryDesc, direction, count, execute_once);
 #endif
+		QueryDescStack = list_delete_first(QueryDescStack);
 	}
 	PG_CATCH();
 	{
-		QueryDescStack = NIL;
+		QueryDescStack = list_delete_first(QueryDescStack);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -351,40 +336,19 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 static void
 qs_ExecutorFinish(QueryDesc *queryDesc)
 {
+	QueryDescStack = lcons(queryDesc, QueryDescStack);
+
 	PG_TRY();
 	{
 		if (prev_ExecutorFinish)
 			prev_ExecutorFinish(queryDesc);
 		else
 			standard_ExecutorFinish(queryDesc);
+		QueryDescStack = list_delete_first(QueryDescStack);
 	}
 	PG_CATCH();
-	{
-		QueryDescStack = NIL;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-}
-
-/*
- * ExecutorEnd hook:
- * 		pop current query description from global stack
- */
-static void
-qs_ExecutorEnd(QueryDesc *queryDesc)
-{
-	PG_TRY();
 	{
 		QueryDescStack = list_delete_first(QueryDescStack);
-
-		if (prev_ExecutorEnd)
-			prev_ExecutorEnd(queryDesc);
-		else
-			standard_ExecutorEnd(queryDesc);
-	}
-	PG_CATCH();
-	{
-		QueryDescStack = NIL;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -618,6 +582,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 						shm_mq_msg	*msg = (shm_mq_msg *) lfirst(i);
 						proc_state	*p_state = (proc_state *) palloc(sizeof(proc_state));
 
+						if (msg->result_code != QS_RETURNED)
+							continue;
+
+						AssertState(msg->result_code == QS_RETURNED);
+
 						qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
 
 						p_state->proc = msg->proc;
@@ -635,7 +604,11 @@ pg_query_state(PG_FUNCTION_ARGS)
 					funcctx->max_calls = max_calls;
 
 					/* Make tuple descriptor */
+#if PG_VERSION_NUM < 120000
 					tupdesc = CreateTemplateTupleDesc(N_ATTRS, false);
+#else
+					tupdesc = CreateTemplateTupleDesc(N_ATTRS);
+#endif
 					TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid", INT4OID, -1, 0);
 					TupleDescInitEntry(tupdesc, (AttrNumber) 2, "frame_number", INT4OID, -1, 0);
 					TupleDescInitEntry(tupdesc, (AttrNumber) 3, "query_text", TEXTOID, -1, 0);
@@ -731,8 +704,11 @@ GetRemoteBackendUserId(PGPROC *proc)
 
 #if PG_VERSION_NUM < 100000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-#else
+#elif PG_VERSION_NUM < 120000
 		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
+#else
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
+				  PG_WAIT_EXTENSION);
 #endif
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
@@ -772,9 +748,14 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 
 #if PG_VERSION_NUM < 100000
 		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
+#elif PG_VERSION_NUM < 120000
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_TIMEOUT,
+					   delay, PG_WAIT_EXTENSION);
 #else
-		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay,
-					   PG_WAIT_EXTENSION);
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT,
+					   delay, PG_WAIT_EXTENSION);
 #endif
 
 		INSTR_TIME_SET_CURRENT(cur_time);
@@ -856,7 +837,12 @@ SendBgWorkerPids(void)
 	msg->number = list_length(all_workers);
 	i = 0;
 	foreach(iter, all_workers)
-		msg->pids[i++] = lfirst_int(iter);
+	{
+		pid_t current_pid = lfirst_int(iter);
+
+		AssertState(current_pid > 0);
+		msg->pids[i++] = current_pid;
+	}
 
 	shm_mq_send(mqh, msg_len, msg, false);
 }
@@ -894,9 +880,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 	for (i = 0; i < msg->number; i++)
 	{
-		pid_t 	 pid = msg->pids[i];
-		PGPROC	*proc = BackendPidGetProc(pid);
-
+		pid_t	pid = msg->pids[i];
+		PGPROC *proc = BackendPidGetProc(pid);
+		if (!proc || !proc->pid)
+			continue;
 		result = lcons(proc, result);
 	}
 
@@ -971,7 +958,8 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	foreach(iter, pworkers)
 	{
 		PGPROC 	*proc = (PGPROC *) lfirst(iter);
-
+		if (!proc || !proc->pid)
+			continue;
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
 									proc->backendId);
