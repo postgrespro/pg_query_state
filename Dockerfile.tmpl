@@ -2,7 +2,7 @@ FROM postgres:${PG_VERSION}-alpine
 
 # Install dependencies
 RUN apk add --no-cache \
-	openssl curl \
+	openssl curl git \
 	perl perl-ipc-run \
 	make musl-dev gcc bison flex coreutils \
 	zlib-dev libedit-dev \
@@ -29,7 +29,6 @@ RUN	chown postgres:postgres ${PGDATA} && \
 	chmod a+rwx /usr/local/share/postgresql/extension
 
 COPY run_tests.sh /run.sh
-COPY tests/requirements.txt /requirements.txt
 RUN chmod 755 /run.sh
 
 ADD . /pg/testdir

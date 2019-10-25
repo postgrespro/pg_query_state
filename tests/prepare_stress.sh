@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+
 mkdir -p tmp_stress
 cd tmp_stress
 rm -rf ./*
@@ -8,10 +9,10 @@ cd tpcds-kit/tools
 make -s
 
 #Generate data
-./dsdgen -FORCE -VERBOSE
+./dsdgen -FORCE -VERBOSE -SCALE 1
 
 #Prepare data
-mkdir tables -p
+mkdir -p tables
 for i in `ls *.dat`; do
   echo "Preparing file " $i
   sed 's/|$//' $i > tables/$i
@@ -22,4 +23,5 @@ done
          -INPUT ../query_templates/templates.lst \
          -VERBOSE Y \
          -QUALIFY Y \
+         -SCALE 1 \
          -DIALECT netezza

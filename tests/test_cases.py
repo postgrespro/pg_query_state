@@ -471,7 +471,7 @@ def test_formats(config):
 
 	qs = query_state(config, acon, query, {'format': 'yaml'})
 	try:
-		yaml_doc = yaml.load(qs[0][3])
+		yaml_doc = yaml.load(qs[0][3], Loader=yaml.FullLoader)
 	except:
 		assert False, 'Invalid yaml format'
 	assert len(qs) == 1
@@ -508,25 +508,28 @@ class DataLoadException(Exception): pass
 class StressTestException(Exception): pass
 
 def load_tpcds_data(config):
-	print('Preparing TPC-DS...')
-	subprocess.call(['./tests/prepare_stress.sh'])
+	print('Loading TPC-DS data...')
+	# subprocess.call(['./tests/prepare_stress.sh'])
 
 	try:
 		conn = psycopg2.connect(**config)
 		cur = conn.cursor()
 
 		# Create tables
-		cur.execute(open('tmp_stress/tpcds-kit/tools/tpcds.sql', 'r').read())
+		with open('tmp_stress/tpcds-kit/tools/tpcds.sql', 'r') as f:
+			cur.execute(f.read())
 
 		# Copy table data from files
 		for table_datafile in os.listdir('tmp_stress/tpcds-kit/tools/'):
-			if table_datafile.endswith(".dat"):
+			if table_datafile.endswith('.dat'):
 				table_name = os.path.splitext(os.path.basename(table_datafile))[0]
-				copy_cmd = "COPY %s FROM 'tmp_stress/tpcds-kit/tools/tables/%s' CSV DELIMITER '|'" % (table_name, table_datafile)
+				copy_cmd = "COPY %s FROM '/pg/testdir/tmp_stress/tpcds-kit/tools/tables/%s' CSV DELIMITER '|'" % (table_name, table_datafile)
 
-				print("Loading table ", table_name)
-				cur.execute("TRUNCATE %s" % table_name)
+				print("Loading table", table_name)
+				# cur.execute("TRUNCATE %s" % table_name)
 				cur.execute(copy_cmd)
+
+		conn.commit()
 
 	except Exception as e:
 		cur.close()
@@ -538,10 +541,10 @@ def load_tpcds_data(config):
 def stress_test(config):
 	"""TPC-DS stress test"""
 	load_tpcds_data(config)
-	print('Starting test...')
 
+	print('Preparing TPC-DS queries...')
 	# Execute query in separate thread 
-	with open("tests/query_tpcds.sql",'r') as f:
+	with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
 		sql = f.read()
 
 	queries = sql.split(';')
@@ -552,10 +555,14 @@ def stress_test(config):
 
 	acon, = n_async_connect(config)
 
+	print('Starting test...')
 	timeout_list = []
+	exclude_list = [2]
 	bar = progressbar.ProgressBar(max_value=len(queries))
 	for i, query in enumerate(queries):
 		bar.update(i + 1)
+		if i + 1 in exclude_list:
+			continue
 		try:
 			# Set query timeout to 10 sec 
 			set_guc(acon, 'statement_timeout', 10000)
@@ -564,8 +571,6 @@ def stress_test(config):
 		#TODO: Put here testgres exception when supported
 		except psycopg2.extensions.QueryCanceledError:
 			timeout_list.append(i)
-		finally:
-			pass
 
 	n_close((acon,))
 
