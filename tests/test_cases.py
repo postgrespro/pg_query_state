@@ -1,3 +1,6 @@
+from __future__ import print_function, division, absolute_import
+
+import os
 import json
 import psycopg2
 import psycopg2.extensions
@@ -6,6 +9,9 @@ import select
 import time
 import xml.etree.ElementTree as ET
 import yaml
+import subprocess
+import progressbar
+
 from time import sleep
 
 def wait(conn):
@@ -28,7 +34,7 @@ def n_async_connect(config, n=1):
 	aconfig['async'] = True
 
 	result = []
-	for _ in xrange(n):
+	for _ in range(n):
 		conn = psycopg2.connect(**aconfig)
 		wait(conn)
 		result.append(conn)
@@ -45,35 +51,35 @@ notices = []
 def debug_output(qs, qs_len, pid, query, expected):
 	something_happened = False
 	if (qs_len and len(qs) != qs_len ):
-		print "len(qs): ", len(qs), ", expected: ", qs_len
+		print( "len(qs): ", len(qs), ", expected: ", qs_len)
 		something_happened = True
 	if (pid and qs[0][0] != pid):
-		print "qs[0][0]: ", qs[0][0], " = ", pid
+		print( "qs[0][0]: ", qs[0][0], " = ", pid)
 		something_happened = True
 	if (qs[0][1] != 0):
-		print "qs[0][1]: ", qs[0][1], ", expected: 0"
+		print( "qs[0][1]: ", qs[0][1], ", expected: 0")
 		something_happened = True
 	if (qs[0][2] != query):
-		print "qs[0][2]:\n", qs[0][2]
-		print "Expected:\n", query
+		print( "qs[0][2]:\n", qs[0][2])
+		print( "Expected:\n", query)
 		something_happened = True
 	if (not (re.match(expected, qs[0][3]))):
-		print "qs[0][3]:\n", qs[0][3]
-		print "Expected:\n", expected
+		print( "qs[0][3]:\n", qs[0][3])
+		print( "Expected:\n", expected)
 		something_happened = True
 	if (qs[0][4] != None):
-		print "qs[0][4]: ", qs[0][4], "Expected: None"
+		print( "qs[0][4]: ", qs[0][4], "Expected: None")
 		something_happened = True
 	if (qs_len and len(qs) > qs_len):
 		for i in range(qs_len, len(qs)):
-			print "qs[",i,"][0]: ", qs[i][0]
-			print "qs[",i,"][1]: ", qs[i][1]
-			print "qs[",i,"][2]: ", qs[i][2]
-			print "qs[",i,"][3]: ", qs[i][3]
-			print "qs[",i,"][4]: ", qs[i][4]
+			print( "qs[",i,"][0]: ", qs[i][0])
+			print( "qs[",i,"][1]: ", qs[i][1])
+			print( "qs[",i,"][2]: ", qs[i][2])
+			print( "qs[",i,"][3]: ", qs[i][3])
+			print( "qs[",i,"][4]: ", qs[i][4])
 		something_happened = True
 	if (something_happened):
-		print "If test have not crashed, then it's OK"
+		print( "If test have not crashed, then it's OK")
 
 def notices_warning():
 	if (len(notices) > 0):
@@ -144,7 +150,7 @@ def query_state(config, async_conn, query, args={}, num_workers=0):
 			'config': config,
 			'pid': async_conn.get_backend_pid()
 			}
-	for k, v in args.iteritems():
+	for k, v in args.items():
 		pg_qs_args[k] = v
 	result = pg_query_state(**pg_qs_args)
 	wait(async_conn)
@@ -171,8 +177,8 @@ def test_simple_query(config):
 	qs = query_state(config, acon, query)
 	debug_output(qs, 1, acon.get_backend_pid(), query, expected)
 	notices_warning()
-	#assert	len(qs) == 1 #Skip this check while output of test can be different
-	assert	qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+	#assert len(qs) == 1 #Skip this check while output of test can be different
+	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
 
 	n_close((acon,))
@@ -194,13 +200,13 @@ def test_concurrent_access(config):
 	wait(acon3)
 
 	qs1, qs2 = acurs1.fetchall(), acurs2.fetchall()
-	assert 	len(qs1) == len(qs2) == 1 \
+	assert len(qs1) == len(qs2) == 1 \
 		and qs1[0][0] == qs2[0][0] == acon3.get_backend_pid() \
 		and qs1[0][1] == qs2[0][1] == 0 \
 		and qs1[0][2] == qs2[0][2] == query \
 		and len(qs1[0][3]) > 0 and len(qs2[0][3]) > 0 \
 		and qs1[0][4] == qs2[0][4] == None
-	#assert	len(notices) == 0
+	#assert len(notices) == 0
 	notices_warning()
 
 	n_close((acon1, acon2, acon3))
@@ -235,13 +241,13 @@ def test_nested_call(config):
 	util_conn.commit()
 
 	qs = query_state(config, acon, call_function)
-	assert 	len(qs) == 2 \
+	assert len(qs) == 2 \
 		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
 		and qs[0][1] == 0 and qs[1][1] == 1 \
 		and qs[0][2] == call_function and qs[0][3] == expected \
 		and qs[1][2] == nested_query and re.match(expected_nested, qs[1][3]) \
 		and qs[0][4] == qs[1][4] == None
-	assert	len(notices) == 0
+	assert len(notices) == 0
 
 	util_curs.execute(drop_function)
 
@@ -270,11 +276,11 @@ def test_insert_on_conflict(config):
 
 	debug_output(qs, 1, acon.get_backend_pid(), query, expected)
 	notices_warning()
-	#assert 	len(qs) == 1 \
-	assert 	qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+	#assert len(qs) == 1 \
+	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) \
 		and qs[0][4] == None
-	assert	len(notices) == 0
+	assert len(notices) == 0
 
 	util_curs.execute(drop_field_uniqueness)
 
@@ -322,7 +328,7 @@ def test_trigger(config):
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
-	assert	len(notices) == 0
+	assert len(notices) == 0
 
 	qs = query_state(config, acon, query, {'triggers': False})
 	debug_output(qs, None, acon.get_backend_pid(), query, expected_upper)
@@ -330,7 +336,7 @@ def test_trigger(config):
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
-	assert	len(notices) == 0
+	assert len(notices) == 0
 
 	util_curs.execute(drop_temps)
 
@@ -353,8 +359,8 @@ def test_costs(config):
 	qs = query_state(config, acon, query, {'costs': True})
 	debug_output(qs, 1, None, query, expected)
 	notices_warning()
-	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
-	assert	len(notices) == 0
+	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	assert len(notices) == 0
 
 	n_close((acon,))
 
@@ -378,8 +384,8 @@ def test_buffers(config):
 	qs = query_state(config, acon, query, {'buffers': True})
 	debug_output(qs, 1, None, query, expected)
 	notices_warning()
-	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
-	assert	len(notices) == 0
+	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	assert len(notices) == 0
 
 	n_close((acon,))
 
@@ -401,18 +407,18 @@ def test_timing(config):
 	qs = query_state(config, acon, query, {'timing': True})
 	debug_output(qs, 1, None, query, expected)
 	notices_warning()
-	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
-	assert	len(notices) == 0
+	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	assert len(notices) == 0
 
 	n_close((acon,))
 
 def check_plan(plan):
-	assert 	plan.has_key('Current loop')
+	assert 'Current loop' in plan
 	cur_loop = plan['Current loop']
-	assert 	cur_loop.has_key('Actual Loop Number') \
-		and cur_loop.has_key('Actual Rows')
+	assert 'Actual Loop Number' in cur_loop\
+		and 'Actual Rows' in cur_loop
 
-	if not plan.has_key('Plans'):
+	if not 'Plans' in plan:
 		return
 
 	for subplan in plan['Plans']:
@@ -422,7 +428,7 @@ def check_xml(root):
 	prefix = '{http://www.postgresql.org/2009/explain}'
 	for plan in root.iter(prefix + 'Plan'):
 		cur_loop = plan.find(prefix + 'Current-loop')
-		assert 	cur_loop != None \
+		assert cur_loop != None \
 			and cur_loop.find(prefix + 'Actual-Loop-Number') != None \
 			and cur_loop.find(prefix + 'Actual-Rows') != None
 
@@ -442,21 +448,21 @@ def test_formats(config):
 	qs = query_state(config, acon, query, {'format': 'text'})
 	debug_output(qs, 1, None, query, expected)
 	notices_warning()
-	assert 	len(qs) == 1 and re.match(expected, qs[0][3])
-	assert	len(notices) == 0
+	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	assert len(notices) == 0
 
 	qs = query_state(config, acon, query, {'format': 'json'})
 	try:
 		js_obj = json.loads(qs[0][3])
 	except ValueError:
 		assert False, 'Invalid json format'
-	assert	len(qs) == 1
-	assert	len(notices) == 0
+	assert len(qs) == 1
+	assert len(notices) == 0
 	check_plan(js_obj['Plan'])
 
 	qs = query_state(config, acon, query, {'format': 'xml'})
-	assert 	len(qs) == 1
-	assert	len(notices) == 0
+	assert len(qs) == 1
+	assert len(notices) == 0
 	try:
 		xml_root = ET.fromstring(qs[0][3])
 	except:
@@ -468,8 +474,8 @@ def test_formats(config):
 		yaml_doc = yaml.load(qs[0][3])
 	except:
 		assert False, 'Invalid yaml format'
-	assert 	len(qs) == 1
-	assert	len(notices) == 0
+	assert len(qs) == 1
+	assert len(notices) == 0
 	check_plan(yaml_doc['Plan'])
 
 	n_close((acon,))
@@ -483,17 +489,85 @@ def test_timing_buffers_conflicts(config):
 	buffers_pattern = 'Buffers:'
 
 	qs = query_state(config, acon, query, {'timing': True, 'buffers': False})
-	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
+	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
 	assert notices == ['WARNING:  timing statistics disabled\n']
 
 	qs = query_state(config, acon, query, {'timing': False, 'buffers': True})
-	assert 	len(qs) == 1 and not re.search(buffers_pattern, qs[0][3])
+	assert len(qs) == 1 and not re.search(buffers_pattern, qs[0][3])
 	assert notices == ['WARNING:  buffers statistics disabled\n']
 
 	qs = query_state(config, acon, query, {'timing': True, 'buffers': True})
-	assert 	len(qs) == 1 and not re.search(timing_pattern, qs[0][3]) \
+	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3]) \
 						 and not re.search(buffers_pattern, qs[0][3])
 	assert len(notices) == 2 and 'WARNING:  timing statistics disabled\n' in notices \
 							 and 'WARNING:  buffers statistics disabled\n' in notices
 
 	n_close((acon,))
+
+class DataLoadException(Exception): pass
+class StressTestException(Exception): pass
+
+def load_tpcds_data(config):
+	print('Preparing TPC-DS...')
+	subprocess.call(['./tests/prepare_stress.sh'])
+
+	try:
+		conn = psycopg2.connect(**config)
+		cur = conn.cursor()
+
+		# Create tables
+		cur.execute(open('tmp_stress/tpcds-kit/tools/tpcds.sql', 'r').read())
+
+		# Copy table data from files
+		for table_datafile in os.listdir('tmp_stress/tpcds-kit/tools/'):
+			if table_datafile.endswith(".dat"):
+				table_name = os.path.splitext(os.path.basename(table_datafile))[0]
+				copy_cmd = "COPY %s FROM 'tmp_stress/tpcds-kit/tools/tables/%s' CSV DELIMITER '|'" % (table_name, table_datafile)
+
+				print("Loading table ", table_name)
+				cur.execute("TRUNCATE %s" % table_name)
+				cur.execute(copy_cmd)
+
+	except Exception as e:
+		cur.close()
+		conn.close()
+		raise DataLoadException('Load failed: %s' % e)
+
+	print('done!')
+
+def stress_test(config):
+	"""TPC-DS stress test"""
+	load_tpcds_data(config)
+	print('Starting test...')
+
+	# Execute query in separate thread 
+	with open("tests/query_tpcds.sql",'r') as f:
+		sql = f.read()
+
+	queries = sql.split(';')
+	for i, query in enumerate(queries):
+		queries[i] = query.replace('%','%%')
+		if (len(query.strip()) == 0):
+			del queries[i]
+
+	acon, = n_async_connect(config)
+
+	timeout_list = []
+	bar = progressbar.ProgressBar(max_value=len(queries))
+	for i, query in enumerate(queries):
+		bar.update(i + 1)
+		try:
+			# Set query timeout to 10 sec 
+			set_guc(acon, 'statement_timeout', 10000)
+			qs = query_state(config, acon, query)
+
+		#TODO: Put here testgres exception when supported
+		except psycopg2.extensions.QueryCanceledError:
+			timeout_list.append(i)
+		finally:
+			pass
+
+	n_close((acon,))
+
+	if len(timeout_list) > 0:
+		print('There were pg_query_state timeouts (10s) on queries: ', timeout_list)

@@ -143,8 +143,8 @@ if [ -f regression.diffs ]; then cat regression.diffs; fi
 
 # run python tests
 set +x -e
-virtualenv /tmp/env && source /tmp/env/bin/activate &&
-pip install PyYAML && pip install psycopg2
+python3 -m venv /tmp/env && source /tmp/env/bin/activate &&
+pip install -r /requirements.txt
 set -e #exit virtualenv with error code
 python tests/pg_qs_test_runner.py --port $PGPORT
 deactivate

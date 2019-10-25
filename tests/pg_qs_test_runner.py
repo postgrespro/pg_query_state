@@ -3,10 +3,15 @@ pg_qs_test_cases.py
 				Tests extract query state from running backend (including concurrent extracts)
 Copyright (c) 2016-2016, Postgres Professional
 '''
+from __future__ import print_function, division, absolute_import
 
-import argparse
-import psycopg2
+import os
 import sys
+import argparse
+import getpass
+import psycopg2
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from test_cases import *
 
 class PasswordPromptAction(argparse.Action):
@@ -34,50 +39,51 @@ teardown_cmd = [
 	'drop table foo cascade',
 	'drop table bar cascade',
 	'drop extension pg_query_state cascade',
-	]
+]
 
 tests = [
-        test_deadlock,
-        test_simple_query,
-        test_concurrent_access,
-        test_nested_call,
-        test_trigger,
-        test_costs,
-        test_buffers,
-        test_timing,
-        test_formats,
-        test_timing_buffers_conflicts,
-        test_insert_on_conflict,
-        ]
+	test_deadlock,
+	test_simple_query,
+	test_concurrent_access,
+	test_nested_call,
+	test_trigger,
+	test_costs,
+	test_buffers,
+	test_timing,
+	test_formats,
+	test_timing_buffers_conflicts,
+	test_insert_on_conflict,
+]
 
 def setup(con):
 	''' Creates pg_query_state extension, creates tables for tests, fills it with data '''
-	print 'setting up...'
+	print('setting up...')
 	try:
 		cur = con.cursor()
 		for cmd in setup_cmd:
 			cur.execute(cmd)
 		con.commit()
 		cur.close()
-	except Exception, e:
+	except Exception as e:
 		raise SetupException('Setup failed: %s' % e)
-	print 'done!'
+	print('done!')
 
 def teardown(con):
 	''' Drops table and extension '''
-	print 'tearing down...'
+	print('tearing down...')
 	try:
 		cur = con.cursor()
 		for cmd in teardown_cmd:
 			cur.execute(cmd)
 		con.commit()
 		cur.close()
-	except Exception, e:
+	except Exception as e:
 		raise TeardownException('Teardown failed: %s' % e)
-	print 'done!'
+	print('done!')
 
 def main(config):
 	''' Main test function '''
+
 	con = psycopg2.connect(**config)
 	setup(con)
 
@@ -86,19 +92,27 @@ def main(config):
 			descr = test.__doc__
 		else:
 			descr = 'test case %d' % (i+1)
-		print ("%s..." % descr),; sys.stdout.flush()
+		print(("%s..." % descr))
+		sys.stdout.flush()
 		test(config)
-		print 'ok!'
+		print('ok!')
+
+	if os.environ['LEVEL'] == 'stress':
+		print('Starting stress test')
+		stress_test(config)
+		print('Stress finished successfully')
 
 	teardown(con)
 	con.close()
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Query state of running backends tests')
+
 	parser.add_argument('--host', default='localhost', help='postgres server host')
 	parser.add_argument('--port', type=int, default=5432, help='postgres server port')
 	parser.add_argument('--user', dest='user', default='postgres', help='user name')
 	parser.add_argument('--database', dest='database', default='postgres', help='database name')
 	parser.add_argument('--password', dest='password', nargs=0, action=PasswordPromptAction, default='')
+
 	args = parser.parse_args()
 	main(args.__dict__)

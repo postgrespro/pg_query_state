@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 if [ -z ${PG_VERSION+x} ]; then
 	echo PG_VERSION is not set!
 	exit 1

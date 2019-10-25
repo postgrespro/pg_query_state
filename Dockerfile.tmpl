@@ -7,7 +7,7 @@ RUN apk add --no-cache \
 	make musl-dev gcc bison flex coreutils \
 	zlib-dev libedit-dev \
 	clang clang-analyzer linux-headers \
-	python2 python2-dev py2-virtualenv;
+	python3 python3-dev py3-virtualenv;
 
 
 # Install fresh valgrind
@@ -29,6 +29,7 @@ RUN	chown postgres:postgres ${PGDATA} && \
 	chmod a+rwx /usr/local/share/postgresql/extension
 
 COPY run_tests.sh /run.sh
+COPY tests/requirements.txt /requirements.txt
 RUN chmod 755 /run.sh
 
 ADD . /pg/testdir
