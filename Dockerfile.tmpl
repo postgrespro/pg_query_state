@@ -4,7 +4,7 @@ FROM postgres:${PG_VERSION}-alpine
 RUN apk add --no-cache \
 	openssl curl \
 	perl perl-ipc-run \
-	make musl-dev gcc bison flex coreutils linux-headers git\
+	make musl-dev gcc bison flex coreutils git\
 	zlib-dev libedit-dev \
 	clang clang-analyzer linux-headers \
 	python2 python2-dev py2-virtualenv;
