@@ -518,7 +518,7 @@ class StressTestException(Exception): pass
 
 def load_tpcds_data(config):
 	print('Loading TPC-DS data...')
-	# subprocess.call(['./tests/prepare_stress.sh'])
+	subprocess.call(['./tests/prepare_stress.sh'])
 
 	try:
 		conn = psycopg2.connect(**config)
