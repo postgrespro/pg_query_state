@@ -27,6 +27,8 @@ env:
     - PG_VERSION=9.6 LEVEL=hardcore
     - PG_VERSION=9.6
     - PG_VERSION=12 LEVEL=stress
+    - PG_VERSION=11 LEVEL=stress
+    - PG_VERSION=10 LEVEL=stress
 
 matrix:
     allow_failures:

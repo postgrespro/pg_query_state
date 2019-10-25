@@ -98,10 +98,19 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
+	set_guc(conn, 'statement_timeout', 10000)
+
 	result = []
+	n_retries = 0
 	while not result:
 		curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
 		result = curs.fetchall()
+		n_retries += 1
+
+		if n_retries == 25:
+			print('pg_query_state tried 25 times with no effect')
+			break
+
 	notices = conn.notices[:]
 	conn.close()
 	return result
@@ -544,7 +553,8 @@ def stress_test(config):
 
 	print('Preparing TPC-DS queries...')
 	# Execute query in separate thread 
-	with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
+	# with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
+	with open('tests/query_tpcds.sql', 'r') as f:
 		sql = f.read()
 
 	queries = sql.split(';')
@@ -557,7 +567,7 @@ def stress_test(config):
 
 	print('Starting test...')
 	timeout_list = []
-	exclude_list = [2]
+	exclude_list = []
 	bar = progressbar.ProgressBar(max_value=len(queries))
 	for i, query in enumerate(queries):
 		bar.update(i + 1)
