@@ -4,7 +4,7 @@ mkdir -p tmp_stress
 cd tmp_stress
 rm -rf ./*
 
-git clone https://github.com/gregrahn/tpcds-kit.git
+git clone --depth 1 --single-branch --branch master https://github.com/gregrahn/tpcds-kit.git
 cd tpcds-kit/tools
 make -s
 

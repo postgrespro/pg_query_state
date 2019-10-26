@@ -14,6 +14,11 @@ import progressbar
 
 from time import sleep
 
+MAX_PG_QS_RETRIES = 50
+TPC_DS_EXCLUDE_LIST = [] # actual numbers of TPC-DS tests to exclude
+TPC_DS_STATEMENT_TIMEOUT = 20000 # statement_timeout in ms
+stress_in_progress = False
+
 def wait(conn):
 	"""wait for some event on connection to postgres"""
 	while 1:
@@ -98,18 +103,21 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
-	set_guc(conn, 'statement_timeout', 10000)
+
+	if stress_in_progress:
+		set_guc(conn, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
+		n_retries = 0
 
 	result = []
-	n_retries = 0
 	while not result:
 		curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
 		result = curs.fetchall()
-		n_retries += 1
 
-		if n_retries == 25:
-			print('pg_query_state tried 25 times with no effect')
-			break
+		if stress_in_progress:
+			n_retries += 1
+			if n_retries >= MAX_PG_QS_RETRIES:
+				print('\npg_query_state tried %s times with no effect, giving up' % MAX_PG_QS_RETRIES)
+				break
 
 	notices = conn.notices[:]
 	conn.close()
@@ -549,6 +557,7 @@ def load_tpcds_data(config):
 
 def stress_test(config):
 	"""TPC-DS stress test"""
+	stress_in_progress = True
 	load_tpcds_data(config)
 
 	print('Preparing TPC-DS queries...')
@@ -565,24 +574,24 @@ def stress_test(config):
 
 	acon, = n_async_connect(config)
 
-	print('Starting test...')
+	print('Starting TPC-DS queries...')
 	timeout_list = []
-	exclude_list = []
 	bar = progressbar.ProgressBar(max_value=len(queries))
 	for i, query in enumerate(queries):
 		bar.update(i + 1)
-		if i + 1 in exclude_list:
+		if i + 1 in TPC_DS_EXCLUDE_LIST:
 			continue
 		try:
-			# Set query timeout to 10 sec 
-			set_guc(acon, 'statement_timeout', 10000)
+			# Set query timeout to TPC_DS_STATEMENT_TIMEOUT / 1000 seconds
+			set_guc(acon, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
 			qs = query_state(config, acon, query)
 
-		#TODO: Put here testgres exception when supported
 		except psycopg2.extensions.QueryCanceledError:
-			timeout_list.append(i)
+			timeout_list.append(i + 1)
 
 	n_close((acon,))
 
 	if len(timeout_list) > 0:
-		print('There were pg_query_state timeouts (10s) on queries: ', timeout_list)
+		print('There were pg_query_state timeouts (%s s) on queries:' % TPC_DS_STATEMENT_TIMEOUT, timeout_list)
+	
+	stress_in_progress = False
