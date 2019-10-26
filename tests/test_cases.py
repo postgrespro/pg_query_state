@@ -103,7 +103,7 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 	Save any warning, info, notice and log data in global variable 'notices'
 	"""
 
-	global notices
+	global notices, stress_in_progress
 
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
@@ -561,6 +561,8 @@ def load_tpcds_data(config):
 
 def stress_test(config):
 	"""TPC-DS stress test"""
+	global stress_in_progress
+
 	stress_in_progress = True
 	load_tpcds_data(config)
 
