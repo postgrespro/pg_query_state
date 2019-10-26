@@ -14,6 +14,10 @@ import progressbar
 
 from time import sleep
 
+# Some queries from TPC-DS may freeze or be even broken,
+# so we allow some sort of failure, since we do not test
+# Postgres, but rather that pg_query_state do not crash
+# anything under stress load.
 MAX_PG_QS_RETRIES = 50
 TPC_DS_EXCLUDE_LIST = [] # actual numbers of TPC-DS tests to exclude
 TPC_DS_STATEMENT_TIMEOUT = 20000 # statement_timeout in ms
