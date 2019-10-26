@@ -60,35 +60,35 @@ notices = []
 def debug_output(qs, qs_len, pid, query, expected):
 	something_happened = False
 	if (qs_len and len(qs) != qs_len ):
-		print( "len(qs): ", len(qs), ", expected: ", qs_len)
+		print("len(qs): ", len(qs), ", expected: ", qs_len)
 		something_happened = True
 	if (pid and qs[0][0] != pid):
-		print( "qs[0][0]: ", qs[0][0], " = ", pid)
+		print("qs[0][0]: ", qs[0][0], " = ", pid)
 		something_happened = True
 	if (qs[0][1] != 0):
-		print( "qs[0][1]: ", qs[0][1], ", expected: 0")
+		print("qs[0][1]: ", qs[0][1], ", expected: 0")
 		something_happened = True
 	if (qs[0][2] != query):
-		print( "qs[0][2]:\n", qs[0][2])
-		print( "Expected:\n", query)
+		print("qs[0][2]:\n", qs[0][2])
+		print("Expected:\n", query)
 		something_happened = True
 	if (not (re.match(expected, qs[0][3]))):
-		print( "qs[0][3]:\n", qs[0][3])
-		print( "Expected:\n", expected)
+		print("qs[0][3]:\n", qs[0][3])
+		print("Expected:\n", expected)
 		something_happened = True
 	if (qs[0][4] != None):
-		print( "qs[0][4]: ", qs[0][4], "Expected: None")
+		print("qs[0][4]: ", qs[0][4], "Expected: None")
 		something_happened = True
 	if (qs_len and len(qs) > qs_len):
 		for i in range(qs_len, len(qs)):
-			print( "qs[",i,"][0]: ", qs[i][0])
-			print( "qs[",i,"][1]: ", qs[i][1])
-			print( "qs[",i,"][2]: ", qs[i][2])
-			print( "qs[",i,"][3]: ", qs[i][3])
-			print( "qs[",i,"][4]: ", qs[i][4])
+			print("qs[",i,"][0]: ", qs[i][0])
+			print("qs[",i,"][1]: ", qs[i][1])
+			print("qs[",i,"][2]: ", qs[i][2])
+			print("qs[",i,"][3]: ", qs[i][3])
+			print("qs[",i,"][4]: ", qs[i][4])
 		something_happened = True
 	if (something_happened):
-		print( "If test have not crashed, then it's OK")
+		print("If test have not crashed, then it's OK")
 
 def notices_warning():
 	if (len(notices) > 0):
@@ -546,7 +546,7 @@ def load_tpcds_data(config):
 				table_name = os.path.splitext(os.path.basename(table_datafile))[0]
 				copy_cmd = "COPY %s FROM '/pg/testdir/tmp_stress/tpcds-kit/tools/tables/%s' CSV DELIMITER '|'" % (table_name, table_datafile)
 
-				print("Loading table", table_name)
+				print('Loading table', table_name)
 				# cur.execute("TRUNCATE %s" % table_name)
 				cur.execute(copy_cmd)
 
@@ -559,7 +559,7 @@ def load_tpcds_data(config):
 
 	print('done!')
 
-def stress_test(config):
+def test_tpc_ds(config):
 	"""TPC-DS stress test"""
 	global stress_in_progress
 
@@ -567,16 +567,20 @@ def stress_test(config):
 	load_tpcds_data(config)
 
 	print('Preparing TPC-DS queries...')
-	# Execute query in separate thread 
-	# with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
-	with open('tests/query_tpcds.sql', 'r') as f:
-		sql = f.read()
+	# # Execute query in separate thread 
+	# # with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
+	# with open('tests/query_tpcds.sql', 'r') as f:
+	# 	sql = f.read()
 
-	queries = sql.split(';')
-	for i, query in enumerate(queries):
-		queries[i] = query.replace('%','%%')
-		if (len(query.strip()) == 0):
-			del queries[i]
+	# queries = sql.split(';')
+	# for i, query in enumerate(queries):
+	# 	queries[i] = query.replace('%','%%')
+	# 	if (len(query.strip()) == 0):
+	# 		del queries[i]
+	queries = []
+	for query_file in sorted(os.listdir('tmp_stress/tpcds-result-reproduction/query_qualification/')):
+		with open('tmp_stress/tpcds-result-reproduction/query_qualification/%s' % query_file, 'r') as f:
+			queries.append(f.read())
 
 	acon, = n_async_connect(config)
 
@@ -598,6 +602,6 @@ def stress_test(config):
 	n_close((acon,))
 
 	if len(timeout_list) > 0:
-		print('There were pg_query_state timeouts (%s s) on queries:' % TPC_DS_STATEMENT_TIMEOUT, timeout_list)
+		print('\nThere were pg_query_state timeouts (%s s) on queries:' % TPC_DS_STATEMENT_TIMEOUT, timeout_list)
 	
 	stress_in_progress = False

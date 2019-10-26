@@ -99,7 +99,7 @@ def main(config):
 
 	if os.environ['LEVEL'] == 'stress':
 		print('Starting stress test')
-		stress_test(config)
+		test_tpc_ds(config)
 		print('Stress finished successfully')
 
 	teardown(con)
