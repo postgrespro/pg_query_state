@@ -26,26 +26,39 @@ Add module name to the `shared_preload_libraries` parameter in `postgresql.conf`
 shared_preload_libraries = 'pg_query_state'
 ```
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
-```
+```sql
 CREATE EXTENSION pg_query_state;
 ```
 Done!
 
 ## Tests
-Tests using parallel sessions using python 2.7 script:
-   ```
-   python tests/pg_qs_test_runner.py [OPTION]...
-   ```
+Test using parallel sessions with Python 2.7/3+ compatible script:
+```shell
+python tests/pg_qs_test_runner.py [OPTION]...
+```
 *prerequisite packages*:
 * `psycopg2` version 2.6 or later
 * `PyYAML` version 3.11 or later
-   
+* `progressbar2` for stress test progress reporting
+
 *options*:
 * *- -host* --- postgres server host, default value is *localhost*
 * *- -port* --- postgres server port, default value is *5432*
 * *- -database* --- database name, default value is *postgres*
 * *- -user* --- user name, default value is *postgres*
 * *- -password* --- user's password, default value is empty
+
+Or run all tests in `Docker` using:
+
+```shell
+export LEVEL=stress
+export PG_VERSION=12
+
+docker-compose build
+docker-compose run tests
+```
+
+There are different test levels: `hardcore`, `nightmare` (runs tests under `valgrind`) and `stress` (runs tests under `TPC-DS` load). 
 
 ## Function pg\_query\_state
 ```plpgsql
@@ -92,11 +105,11 @@ This parameters is set on called side before running any queries whose states ar
 
 ## Examples
 Set maximum number of parallel workers on `gather` node equals `2`:
-```
+```sql
 postgres=# set max_parallel_workers_per_gather = 2;
 ```
 Assume one backend with pid = 49265 performs a simple query:
-```
+```sql
 postgres=# select pg_backend_pid();
  pg_backend_pid
  ----------------
@@ -105,7 +118,7 @@ postgres=# select pg_backend_pid();
 postgres=# select count(*) from foo join bar on foo.c1=bar.c1;
 ```
 Other backend can extract intermediate state of execution that query:
-```
+```sql
 postgres=# \x
 postgres=# select * from pg_query_state(49265);
 -[ RECORD 1 ]+-------------------------------------------------------------------------------------------------------------------------
@@ -150,11 +163,11 @@ In example above working backend spawns two parallel workers with pids `49324` a
 `Seq Scan` node has statistics on passed loops (average number of rows delivered to `Nested Loop` and number of passed loops are shown) and statistics on current loop. Other nodes has statistics only for current loop as this loop is first (`loop number` = 1).
 
 Assume first backend executes some function:
-```
+```sql
 postgres=# select n_join_foo_bar();
 ```
 Other backend can get the follow output:
-```
+```sql
 postgres=# select * from pg_query_state(49265);
 -[ RECORD 1 ]+------------------------------------------------------------------------------------------------------------------
 pid          | 49265
@@ -180,7 +193,7 @@ leader_pid   | (null)
 First row corresponds to function call, second - to query which is in the body of that function.
 
 We can get result plans in different format (e.g. `json`):
-```
+```sql
 postgres=# select * from pg_query_state(pid := 49265, format := 'json');
 -[ RECORD 1 ]+------------------------------------------------------------
 pid          | 49265
