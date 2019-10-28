@@ -6,6 +6,7 @@ rm -rf ./*
 
 git clone --depth 1 --single-branch --branch master https://github.com/gregrahn/tpcds-kit.git
 git clone --depth 1 --single-branch --branch master https://github.com/cwida/tpcds-result-reproduction.git
+
 cd tpcds-kit/tools
 make -s
 

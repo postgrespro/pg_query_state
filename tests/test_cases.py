@@ -542,11 +542,10 @@ def load_tpcds_data(config):
 		for table_datafile in os.listdir('tmp_stress/tpcds-kit/tools/'):
 			if table_datafile.endswith('.dat'):
 				table_name = os.path.splitext(os.path.basename(table_datafile))[0]
-				copy_cmd = "COPY %s FROM '/pg/testdir/tmp_stress/tpcds-kit/tools/tables/%s' CSV DELIMITER '|'" % (table_name, table_datafile)
 
 				print('Loading table', table_name)
-				# cur.execute("TRUNCATE %s" % table_name)
-				cur.execute(copy_cmd)
+				with open('tmp_stress/tpcds-kit/tools/tables/%s' % table_datafile) as f:
+					cur.copy_from(f, table_name, sep='|', null='')
 
 		conn.commit()
 
