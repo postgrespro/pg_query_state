@@ -32,7 +32,7 @@ CREATE EXTENSION pg_query_state;
 Done!
 
 ## Tests
-Test using parallel sessions with Python 2.7/3+ compatible script:
+Test using parallel sessions with Python 3+ compatible script:
 ```shell
 python tests/pg_qs_test_runner.py [OPTION]...
 ```

@@ -3,7 +3,6 @@ pg_qs_test_cases.py
 				Tests extract query state from running backend (including concurrent extracts)
 Copyright (c) 2016-2016, Postgres Professional
 '''
-from __future__ import print_function, division, absolute_import
 
 import os
 import sys
