@@ -47,11 +47,13 @@ python tests/pg_qs_test_runner.py [OPTION]...
 * *- -database* --- database name, default value is *postgres*
 * *- -user* --- user name, default value is *postgres*
 * *- -password* --- user's password, default value is empty
+* *- -tpc-ds* --- runs only stress tests on TPC-DS benchmark
 
 Or run all tests in `Docker` using:
 
 ```shell
-export LEVEL=stress
+export LEVEL=hardcore
+export USE_TPCDS=1
 export PG_VERSION=12
 
 docker-compose build

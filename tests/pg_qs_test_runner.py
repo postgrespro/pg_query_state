@@ -32,7 +32,7 @@ setup_cmd = [
 	'insert into bar select i, i%2=1 from generate_series(1, 500000) as i',
 	'analyze foo',
 	'analyze bar',
-	]
+]
 
 teardown_cmd = [
 	'drop table foo cascade',
@@ -82,10 +82,19 @@ def teardown(con):
 
 def main(config):
 	''' Main test function '''
+	conn_params = {
+			key:config.__dict__[key] for key in ('host', 'port', 'user', 'database', 'password')
+	}
 
-	con = psycopg2.connect(**config)
-	setup(con)
+	if config.use_tpcds:
+		print('Starting stress test')
+		test_tpc_ds(conn_params)
+		print('Stress finished successfully')
+		return
 
+	# run default tests
+	init_conn = psycopg2.connect(**conn_params)
+	setup(init_conn)
 	for i, test in enumerate(tests):
 		if test.__doc__:
 			descr = test.__doc__
@@ -93,16 +102,10 @@ def main(config):
 			descr = 'test case %d' % (i+1)
 		print(("%s..." % descr))
 		sys.stdout.flush()
-		test(config)
+		test(conn_params)
 		print('ok!')
-
-	if os.environ['LEVEL'] == 'stress':
-		print('Starting stress test')
-		test_tpc_ds(config)
-		print('Stress finished successfully')
-
-	teardown(con)
-	con.close()
+	teardown(init_conn)
+	init_conn.close()
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Query state of running backends tests')
@@ -111,7 +114,8 @@ if __name__ == '__main__':
 	parser.add_argument('--port', type=int, default=5432, help='postgres server port')
 	parser.add_argument('--user', dest='user', default='postgres', help='user name')
 	parser.add_argument('--database', dest='database', default='postgres', help='database name')
-	parser.add_argument('--password', dest='password', nargs=0, action=PasswordPromptAction, default='')
+	parser.add_argument('--password', dest='password', nargs=0, action=PasswordPromptAction, default='', help='password')
+	parser.add_argument('--tpc-ds', dest='use_tpcds', action='store_true', help='run only stress test based on TPC-DS benchmark')
 
 	args = parser.parse_args()
-	main(args.__dict__)
+	main(args)
