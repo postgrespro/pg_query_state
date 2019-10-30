@@ -35,4 +35,4 @@ ADD . /pg/testdir
 WORKDIR /pg/testdir
 
 USER postgres
-ENTRYPOINT LEVEL=${LEVEL} /run.sh
+ENTRYPOINT LEVEL=${LEVEL} USE_TPCDS=${USE_TPCDS} /run.sh
