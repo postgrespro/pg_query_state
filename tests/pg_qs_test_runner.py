@@ -83,7 +83,7 @@ def teardown(con):
 def main(config):
 	''' Main test function '''
 	conn_params = {
-			key:config.__dict__[key] for key in ('host', 'port', 'user', 'database', 'password')
+		key:config.__dict__[key] for key in ('host', 'port', 'user', 'database', 'password')
 	}
 
 	if config.use_tpcds:

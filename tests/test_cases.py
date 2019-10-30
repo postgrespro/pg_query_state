@@ -526,13 +526,16 @@ def test_timing_buffers_conflicts(config):
 class DataLoadException(Exception): pass
 class StressTestException(Exception): pass
 
-def load_tpcds_data(config):
-	print('Loading TPC-DS data...')
+def setup_tpcds(config):
+	print('Setting up TPC-DS test...')
 	subprocess.call(['./tests/prepare_stress.sh'])
 
 	try:
 		conn = psycopg2.connect(**config)
 		cur = conn.cursor()
+
+		# Create pg_query_state extension
+		cur.execute('CREATE EXTENSION IF NOT EXISTS pg_query_state')
 
 		# Create tables
 		with open('tmp_stress/tpcds-kit/tools/tpcds.sql', 'r') as f:
@@ -561,7 +564,7 @@ def test_tpc_ds(config):
 	global stress_in_progress
 
 	stress_in_progress = True
-	load_tpcds_data(config)
+	setup_tpcds(config)
 
 	print('Preparing TPC-DS queries...')
 	# # Execute query in separate thread 
