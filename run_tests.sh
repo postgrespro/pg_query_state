@@ -147,7 +147,7 @@ python3 -m venv /tmp/env && source /tmp/env/bin/activate &&
 pip install -r tests/requirements.txt
 set -e #exit virtualenv with error code
 python tests/pg_qs_test_runner.py --port $PGPORT
-if [[ -n $USE_TPCDS ]]; then
+if [[ "$USE_TPCDS" == "1" ]]; then
 	python tests/pg_qs_test_runner.py --port $PGPORT --tpc-ds
 fi
 deactivate
