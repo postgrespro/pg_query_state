@@ -24,7 +24,7 @@ env:
     - PG_VERSION=11
     - PG_VERSION=10 LEVEL=hardcore USE_TPCDS=1
     - PG_VERSION=10
-    - PG_VERSION=9.6 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=9.6 LEVEL=hardcore
     - PG_VERSION=9.6
 
 matrix:
