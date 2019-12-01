@@ -35,18 +35,15 @@ Done!
 ## Tests
 Tests using parallel sessions using python 2.7 script:
    ```
+   export PG_CONFIG=/path/to/pg_config
    python tests/pg_qs_test_runner.py [OPTION]...
    ```
 *prerequisite packages*:
-* `psycopg2` version 2.6 or later
+* `testgres` version 1.8.2 or later
 * `PyYAML` version 3.11 or later
-   
+
 *options*:
-* *- -host* --- postgres server host, default value is *localhost*
-* *- -port* --- postgres server port, default value is *5432*
-* *- -database* --- database name, default value is *postgres*
-* *- -user* --- user name, default value is *postgres*
-* *- -password* --- user's password, default value is empty
+* *--stress* --- run stress test using tpc-ds benchmark
 
 ## Function pg\_query\_state
 ```plpgsql
