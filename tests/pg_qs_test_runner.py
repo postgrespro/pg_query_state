@@ -1,17 +1,17 @@
 '''
-pg_qs_test_cases.py
-				Tests extract query state from running backend (including concurrent extracts)
-Copyright (c) 2016-2016, Postgres Professional
+pg_qs_test_runner.py
+Copyright (c) 2016-2019, Postgres Professional
 '''
 
-import os
-import sys
 import argparse
 import getpass
+import os
 import psycopg2
+import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from test_cases import *
+import tpcds
 
 class PasswordPromptAction(argparse.Action):
 	def __call__(self, parser, args, values, option_string=None):
@@ -88,7 +88,7 @@ def main(config):
 
 	if config.use_tpcds:
 		print('Starting stress test')
-		test_tpc_ds(conn_params)
+		tpcds.test_tpc_ds(conn_params)
 		print('Stress finished successfully')
 		return
 
