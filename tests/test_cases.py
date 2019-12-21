@@ -50,7 +50,7 @@ def test_simple_query(config):
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs, _ = common.query_state(config, acon, query)
+	qs, _ = common.onetime_query_state(config, acon, query)
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
 
@@ -111,7 +111,7 @@ def test_nested_call(config):
 	util_curs.execute(create_function)
 	util_conn.commit()
 
-	qs, notices = common.query_state(config, acon, call_function)
+	qs, notices = common.onetime_query_state(config, acon, call_function)
 	assert len(qs) == 2 \
 		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
 		and qs[0][1] == 0 and qs[1][1] == 1 \
@@ -143,7 +143,7 @@ def test_insert_on_conflict(config):
 	util_curs.execute(add_field_uniqueness)
 	util_conn.commit()
 
-	qs, notices = common.query_state(config, acon, query)
+	qs, notices = common.onetime_query_state(config, acon, query)
 
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected, qs[0][3]) \
@@ -185,13 +185,13 @@ def test_trigger(config):
 	util_curs.execute(create_trigger)
 	util_conn.commit()
 
-	qs, notices = common.query_state(config, acon, query, {'triggers': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'triggers': True})
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
 	assert len(notices) == 0
 
-	qs, notices = common.query_state(config, acon, query, {'triggers': False})
+	qs, notices = common.onetime_query_state(config, acon, query, {'triggers': False})
 	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
 		and qs[0][2] == query and re.match(expected_upper, qs[0][3]) \
 		and qs[0][4] == None
@@ -215,7 +215,7 @@ def test_costs(config):
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs, notices = common.query_state(config, acon, query, {'costs': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'costs': True})
 	assert len(qs) == 1 and re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
@@ -238,7 +238,7 @@ def test_buffers(config):
 
 	common.set_guc(acon, 'pg_query_state.enable_buffers', 'on')
 
-	qs, notices = common.query_state(config, acon, query, {'buffers': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'buffers': True})
 	assert len(qs) == 1 and re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
@@ -259,7 +259,7 @@ def test_timing(config):
 
 	common.set_guc(acon, 'pg_query_state.enable_timing', 'on')
 
-	qs, notices = common.query_state(config, acon, query, {'timing': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True})
 	assert len(qs) == 1 and re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
@@ -298,11 +298,11 @@ def test_formats(config):
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs, notices = common.query_state(config, acon, query, {'format': 'text'})
+	qs, notices = common.onetime_query_state(config, acon, query, {'format': 'text'})
 	assert len(qs) == 1 and re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
-	qs, notices = common.query_state(config, acon, query, {'format': 'json'})
+	qs, notices = common.onetime_query_state(config, acon, query, {'format': 'json'})
 	try:
 		js_obj = json.loads(qs[0][3])
 	except ValueError:
@@ -311,7 +311,7 @@ def test_formats(config):
 	assert len(notices) == 0
 	check_plan(js_obj['Plan'])
 
-	qs, notices = common.query_state(config, acon, query, {'format': 'xml'})
+	qs, notices = common.onetime_query_state(config, acon, query, {'format': 'xml'})
 	assert len(qs) == 1
 	assert len(notices) == 0
 	try:
@@ -320,7 +320,7 @@ def test_formats(config):
 		assert False, 'Invalid xml format'
 	check_xml(xml_root)
 
-	qs, _ = common.query_state(config, acon, query, {'format': 'yaml'})
+	qs, _ = common.onetime_query_state(config, acon, query, {'format': 'yaml'})
 	try:
 		yaml_doc = yaml.load(qs[0][3], Loader=yaml.FullLoader)
 	except:
@@ -339,15 +339,15 @@ def test_timing_buffers_conflicts(config):
 	timing_pattern = '(?:running time=\d+.\d+)|(?:actual time=\d+.\d+..\d+.\d+)'
 	buffers_pattern = 'Buffers:'
 
-	qs, notices = common.query_state(config, acon, query, {'timing': True, 'buffers': False})
+	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True, 'buffers': False})
 	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
 	assert notices == ['WARNING:  timing statistics disabled\n']
 
-	qs, notices = common.query_state(config, acon, query, {'timing': False, 'buffers': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'timing': False, 'buffers': True})
 	assert len(qs) == 1 and not re.search(buffers_pattern, qs[0][3])
 	assert notices == ['WARNING:  buffers statistics disabled\n']
 
-	qs, notices = common.query_state(config, acon, query, {'timing': True, 'buffers': True})
+	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True, 'buffers': True})
 	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3]) \
 						 and not re.search(buffers_pattern, qs[0][3])
 	assert len(notices) == 2 and 'WARNING:  timing statistics disabled\n' in notices \

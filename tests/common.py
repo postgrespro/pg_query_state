@@ -6,13 +6,7 @@ Copyright (c) 2016-2019, Postgres Professional
 import psycopg2
 import psycopg2.extensions
 import select
-
-# Some queries from TPC-DS may freeze or be even broken,
-# so we allow some sort of failure, since we do not test
-# Postgres, but rather that pg_query_state do not crash
-# anything under stress load.
-MAX_PG_QS_RETRIES = 50
-
+import time
 
 def wait(conn):
 	"""wait for some event on connection to postgres"""
@@ -47,8 +41,7 @@ def n_close(conns):
 		conn.close()
 
 def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
-								buffers=False, triggers=False, format='text', \
-								stress_in_progress=False):
+								buffers=False, triggers=False, format='text'):
 	"""
 	Get query state from backend with specified pid and optional parameters.
 	Save any warning, info, notice and log data in global variable 'notices'
@@ -57,53 +50,48 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
 
-	if stress_in_progress:
-		set_guc(conn, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
-		n_retries = 0
-
-	result = []
-	while not result:
-		curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
-		result = curs.fetchall()
-
-		if stress_in_progress:
-			n_retries += 1
-			if n_retries >= MAX_PG_QS_RETRIES:
-				print('\npg_query_state tried %s times with no effect, giving up' % MAX_PG_QS_RETRIES)
-				break
-
+	curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
+	result = curs.fetchall()
 	notices = conn.notices[:]
 	conn.close()
+
 	return result, notices
 
-def query_state(config, async_conn, query, args={}, num_workers=0, stress_in_progress=False):
+def onetime_query_state(config, async_conn, query, args={}, num_workers=0):
 	"""
 	Get intermediate state of 'query' on connection 'async_conn' after number of 'steps'
 	of node executions from start of query
 	"""
 
 	acurs = async_conn.cursor()
-	conn = psycopg2.connect(**config)
-	curs = conn.cursor()
 
 	set_guc(async_conn, 'enable_mergejoin', 'off')
 	set_guc(async_conn, 'max_parallel_workers_per_gather', num_workers)
 	acurs.execute(query)
 
 	# extract current state of query progress
+	MAX_PG_QS_RETRIES = 10
+	DELAY_BETWEEN_RETRIES = 0.1
 	pg_qs_args = {
 			'config': config,
 			'pid': async_conn.get_backend_pid()
 			}
 	for k, v in args.items():
 		pg_qs_args[k] = v
-	result, notices = pg_query_state(**pg_qs_args)
+	n_retries = 0
+	while True:
+		result, notices = pg_query_state(**pg_qs_args)
+		n_retries += 1
+		if len(result) > 0:
+			break
+		if n_retries >= MAX_PG_QS_RETRIES:
+			# pg_query_state callings don't return any result, more likely run
+			# query has completed
+			break
+		time.sleep(DELAY_BETWEEN_RETRIES)
 	wait(async_conn)
 
-	set_guc(async_conn, 'pg_query_state.executor_trace', 'off')
 	set_guc(async_conn, 'enable_mergejoin', 'on')
-
-	conn.close()
 	return result, notices
 
 def set_guc(async_conn, param, value):

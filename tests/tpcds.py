@@ -8,6 +8,7 @@ import os
 import progressbar
 import psycopg2.extensions
 import subprocess
+import time
 
 class DataLoadException(Exception): pass
 class StressTestException(Exception): pass
@@ -58,6 +59,7 @@ def run_tpcds(config):
 			queries.append(f.read())
 
 	acon, = common.n_async_connect(config)
+	pid = acon.get_backend_pid()
 
 	print('Starting TPC-DS queries...')
 	timeout_list = []
@@ -69,7 +71,36 @@ def run_tpcds(config):
 		try:
 			# Set query timeout to TPC_DS_STATEMENT_TIMEOUT / 1000 seconds
 			common.set_guc(acon, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
-			qs = common.query_state(config, acon, query, stress_in_progress=True)
+
+			# run query
+			acurs = acon.cursor()
+			acurs.execute(query)
+
+			# periodically run pg_query_state on running backend trying to get
+			# crash of PostgreSQL
+			MAX_PG_QS_RETRIES = 10
+			PG_QS_DELAY, BEFORE_GOT_QS_DELAY = 0.1, 0.1
+			BEFORE_GOT_QS, GOT_QS = range(2)
+			state, n_retries = BEFORE_GOT_QS, 0
+			while True:
+				result, _ = common.pg_query_state(config, pid)
+				if state == BEFORE_GOT_QS:
+					if len(result) > 0:
+						state = GOT_QS
+						continue
+					n_retries += 1
+					if n_retries >= MAX_PG_QS_RETRIES:
+						# pg_query_state callings don't return any result, more likely run
+						# query has completed
+						break
+					time.sleep(BEFORE_GOT_QS_DELAY)
+				if state == GOT_QS:
+					if len(result) == 0:
+						break
+				time.sleep(PG_QS_DELAY)
+
+			# wait for real query completion
+			common.wait(acon)
 
 		except psycopg2.extensions.QueryCanceledError:
 			timeout_list.append(i + 1)
