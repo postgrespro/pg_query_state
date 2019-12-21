@@ -48,22 +48,10 @@ def setup_tpcds(config):
 
 	print('done!')
 
-def test_tpc_ds(config):
+def run_tpcds(config):
 	"""TPC-DS stress test"""
 
-	setup_tpcds(config)
-
 	print('Preparing TPC-DS queries...')
-	# # Execute query in separate thread
-	# # with open('tmp_stress/tpcds-kit/tools/query_0.sql', 'r') as f:
-	# with open('tests/query_tpcds.sql', 'r') as f:
-	# 	sql = f.read()
-
-	# queries = sql.split(';')
-	# for i, query in enumerate(queries):
-	# 	queries[i] = query.replace('%','%%')
-	# 	if (len(query.strip()) == 0):
-	# 		del queries[i]
 	queries = []
 	for query_file in sorted(os.listdir('tmp_stress/tpcds-result-reproduction/query_qualification/')):
 		with open('tmp_stress/tpcds-result-reproduction/query_qualification/%s' % query_file, 'r') as f:

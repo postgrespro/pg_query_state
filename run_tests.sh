@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# Copyright (c) 2018, Postgres Professional
+# Copyright (c) 2019, Postgres Professional
 #
 # supported levels:
 #		* standard
@@ -55,7 +55,7 @@ fi
 
 # build and install PostgreSQL
 if [ "$LEVEL" = "hardcore" ] || \
-  [ "$LEVEL" = "nightmare" ]; then
+   [ "$LEVEL" = "nightmare" ]; then
 	# enable Valgrind support
 	sed -i.bak "s/\/* #define USE_VALGRIND *\//#define USE_VALGRIND/g" src/include/pg_config_manual.h
 
@@ -148,7 +148,8 @@ pip install -r tests/requirements.txt
 set -e #exit virtualenv with error code
 python tests/pg_qs_test_runner.py --port $PGPORT
 if [[ "$USE_TPCDS" == "1" ]]; then
-	python tests/pg_qs_test_runner.py --port $PGPORT --tpc-ds
+	python tests/pg_qs_test_runner.py --port $PGPORT --tpc-ds-setup
+	python tests/pg_qs_test_runner.py --port $PGPORT --tpc-ds-run
 fi
 deactivate
 set -x

@@ -86,9 +86,15 @@ def main(config):
 		key:config.__dict__[key] for key in ('host', 'port', 'user', 'database', 'password')
 	}
 
-	if config.use_tpcds:
+	if config.tpcds_setup:
+		print('Setup database for TPC-DS bench')
+		tpcds.setup_tpcds(conn_params)
+		print('Database is setup successfully')
+		return
+
+	if config.tpcds_run:
 		print('Starting stress test')
-		tpcds.test_tpc_ds(conn_params)
+		tpcds.run_tpcds(conn_params)
 		print('Stress finished successfully')
 		return
 
@@ -115,7 +121,8 @@ if __name__ == '__main__':
 	parser.add_argument('--user', dest='user', default='postgres', help='user name')
 	parser.add_argument('--database', dest='database', default='postgres', help='database name')
 	parser.add_argument('--password', dest='password', nargs=0, action=PasswordPromptAction, default='', help='password')
-	parser.add_argument('--tpc-ds', dest='use_tpcds', action='store_true', help='run only stress test based on TPC-DS benchmark')
+	parser.add_argument('--tpc-ds-setup', dest='tpcds_setup', action='store_true', help='setup database to run TPC-DS benchmark')
+	parser.add_argument('--tpc-ds-run', dest='tpcds_run', action='store_true', help='run only stress test based on TPC-DS benchmark')
 
 	args = parser.parse_args()
 	main(args)
