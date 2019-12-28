@@ -78,26 +78,28 @@ def run_tpcds(config):
 
 			# periodically run pg_query_state on running backend trying to get
 			# crash of PostgreSQL
-			MAX_PG_QS_RETRIES = 10
-			PG_QS_DELAY, BEFORE_GOT_QS_DELAY = 0.1, 0.1
-			BEFORE_GOT_QS, GOT_QS = range(2)
-			state, n_retries = BEFORE_GOT_QS, 0
+			MAX_FIRST_GETTING_QS_RETRIES = 10
+			PG_QS_DELAY, BEFORE_GETTING_QS_DELAY = 0.1, 0.1
+			BEFORE_GETTING_QS, GETTING_QS = range(2)
+			state, n_first_getting_qs_retries = BEFORE_GETTING_QS, 0
 			while True:
-				result, _ = common.pg_query_state(config, pid)
-				if state == BEFORE_GOT_QS:
-					if len(result) > 0:
-						state = GOT_QS
+				result, notices = common.pg_query_state(config, pid)
+				# run state machine to determine the first getting query state
+				# and query finishing
+				if state == BEFORE_GETTING_QS:
+					if len(result) > 0 or common.BACKEND_IS_ACTIVE_INFO in notices:
+						state = GETTING_QS
 						continue
-					n_retries += 1
-					if n_retries >= MAX_PG_QS_RETRIES:
+					n_first_getting_qs_retries += 1
+					if n_first_getting_qs_retries >= MAX_FIRST_GETTING_QS_RETRIES:
 						# pg_query_state callings don't return any result, more likely run
 						# query has completed
 						break
-					time.sleep(BEFORE_GOT_QS_DELAY)
-				if state == GOT_QS:
-					if len(result) == 0:
+					time.sleep(BEFORE_GETTING_QS_DELAY)
+				elif state == GETTING_QS:
+					if common.BACKEND_IS_IDLE_INFO in notices:
 						break
-				time.sleep(PG_QS_DELAY)
+					time.sleep(PG_QS_DELAY)
 
 			# wait for real query completion
 			common.wait(acon)

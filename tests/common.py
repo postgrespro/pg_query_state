@@ -8,6 +8,9 @@ import psycopg2.extensions
 import select
 import time
 
+BACKEND_IS_IDLE_INFO = 'INFO:  state of backend is idle\n'
+BACKEND_IS_ACTIVE_INFO = 'INFO:  state of backend is active\n'
+
 def wait(conn):
 	"""wait for some event on connection to postgres"""
 	while 1:
