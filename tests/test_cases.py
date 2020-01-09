@@ -1,16 +1,18 @@
 '''
 test_cases.py
-Copyright (c) 2016-2019, Postgres Professional
+Copyright (c) 2016-2020, Postgres Professional
 '''
 
-import common
 import json
-import psycopg2
 import re
 import select
 import time
 import xml.etree.ElementTree as ET
+
+import psycopg2
 import yaml
+
+import common
 
 def test_deadlock(config):
 	"""test when two backends try to extract state of each other"""

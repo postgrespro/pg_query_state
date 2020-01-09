@@ -1,20 +1,19 @@
 '''
 test_cases.py
-Copyright (c) 2016-2019, Postgres Professional
+Copyright (c) 2016-2020, Postgres Professional
 '''
 
-import common
 import os
-import progressbar
-import psycopg2.extensions
 import subprocess
 import time
 
+import progressbar
+import psycopg2.extensions
+
+import common
+
 class DataLoadException(Exception): pass
 class StressTestException(Exception): pass
-
-TPC_DS_EXCLUDE_LIST = [] # actual numbers of TPC-DS tests to exclude
-TPC_DS_STATEMENT_TIMEOUT = 20000 # statement_timeout in ms
 
 def setup_tpcds(config):
 	print('Setting up TPC-DS test...')
@@ -62,6 +61,7 @@ def run_tpcds(config):
 	pid = acon.get_backend_pid()
 
 	print('Starting TPC-DS queries...')
+	TPC_DS_EXCLUDE_LIST = [] # actual numbers of TPC-DS tests to exclude
 	timeout_list = []
 	bar = progressbar.ProgressBar(max_value=len(queries))
 	for i, query in enumerate(queries):
@@ -70,6 +70,7 @@ def run_tpcds(config):
 			continue
 		try:
 			# Set query timeout to TPC_DS_STATEMENT_TIMEOUT / 1000 seconds
+			TPC_DS_STATEMENT_TIMEOUT = 20000
 			common.set_guc(acon, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
 
 			# run query
@@ -84,7 +85,7 @@ def run_tpcds(config):
 			state, n_first_getting_qs_retries = BEFORE_GETTING_QS, 0
 			while True:
 				result, notices = common.pg_query_state(config, pid)
-				# run state machine to determine the first getting query state
+				# run state machine to determine the first getting of query state
 				# and query finishing
 				if state == BEFORE_GETTING_QS:
 					if len(result) > 0 or common.BACKEND_IS_ACTIVE_INFO in notices:

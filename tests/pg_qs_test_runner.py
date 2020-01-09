@@ -1,13 +1,14 @@
 '''
 pg_qs_test_runner.py
-Copyright (c) 2016-2019, Postgres Professional
+Copyright (c) 2016-2020, Postgres Professional
 '''
 
 import argparse
 import getpass
 import os
-import psycopg2
 import sys
+
+import psycopg2
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from test_cases import *
