@@ -51,6 +51,9 @@ def setup_tpcds(config):
 def run_tpcds(config):
 	"""TPC-DS stress test"""
 
+	TPC_DS_EXCLUDE_LIST = []			# actual numbers of TPC-DS tests to exclude
+	TPC_DS_STATEMENT_TIMEOUT = 20000	# statement_timeout in ms
+
 	print('Preparing TPC-DS queries...')
 	queries = []
 	for query_file in sorted(os.listdir('tmp_stress/tpcds-result-reproduction/query_qualification/')):
@@ -61,7 +64,6 @@ def run_tpcds(config):
 	pid = acon.get_backend_pid()
 
 	print('Starting TPC-DS queries...')
-	TPC_DS_EXCLUDE_LIST = [] # actual numbers of TPC-DS tests to exclude
 	timeout_list = []
 	bar = progressbar.ProgressBar(max_value=len(queries))
 	for i, query in enumerate(queries):
@@ -70,7 +72,6 @@ def run_tpcds(config):
 			continue
 		try:
 			# Set query timeout to TPC_DS_STATEMENT_TIMEOUT / 1000 seconds
-			TPC_DS_STATEMENT_TIMEOUT = 20000
 			common.set_guc(acon, 'statement_timeout', TPC_DS_STATEMENT_TIMEOUT)
 
 			# run query
