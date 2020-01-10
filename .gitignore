@@ -9,3 +9,5 @@ pg_query_state--*.sql
 cscope.out
 tags
 Dockerfile
+tmp_stress
+

@@ -2,12 +2,12 @@ FROM postgres:${PG_VERSION}-alpine
 
 # Install dependencies
 RUN apk add --no-cache \
-	openssl curl \
+	openssl curl git \
 	perl perl-ipc-run \
 	make musl-dev gcc bison flex coreutils \
 	zlib-dev libedit-dev \
 	clang clang-analyzer linux-headers \
-	python2 python2-dev py2-virtualenv;
+	python3 python3-dev py3-virtualenv;
 
 
 # Install fresh valgrind
@@ -35,4 +35,4 @@ ADD . /pg/testdir
 WORKDIR /pg/testdir
 
 USER postgres
-ENTRYPOINT LEVEL=${LEVEL} /run.sh
+ENTRYPOINT LEVEL=${LEVEL} USE_TPCDS=${USE_TPCDS} /run.sh
