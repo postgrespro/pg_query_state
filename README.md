@@ -2,12 +2,12 @@
 [![codecov](https://codecov.io/gh/postgrespro/pg_query_state/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_query_state)
 
 # pg\_query\_state
-The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the latest stable version of PostgreSQL. Different branches are intended for different version numbers of PostgreSQL, e.g., branch _PG9_5_ corresponds to PostgreSQL 9.5.
+The `pg_query_state` module provides facility to know the current state of query execution on working backend. To enable this extension you have to patch the stable version of PostgreSQL, recompile it and deploy new binaries. All patch files are located in `patches/` directory and tagged with suffix of PostgreSQL version number.
 
 ## Overview
-Each nonutility query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree which is kind of imperative representation of declarative SQL query. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running on external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
+Each nonutility query statement (SELECT/INSERT/UPDATE/DELETE) after optimization/planning stage is translated into plan tree which is kind of imperative representation of SQL query execution algorithm. EXPLAIN ANALYZE request allows to demonstrate execution statistics gathered from each node of plan tree (full time of execution, number rows emitted to upper nodes, etc). But this statistics is collected after execution of query. This module allows to show actual statistics of query running gathered from external backend. At that, format of resulting output is almost identical to ordinal EXPLAIN ANALYZE. Thus users are able to track of query execution in progress.
 
-In fact, this module is able to explore external backend and determine its actual state. Particularly it's helpful when backend executes a heavy query or gets stuck.
+In fact, this module is able to explore external backend and determine its actual state. Particularly it's helpful when backend executes a heavy query and gets stuck.
 
 ## Use cases
 Using this module there can help in the following things:
@@ -15,8 +15,7 @@ Using this module there can help in the following things:
  - overwatch the query execution
 
 ## Installation
-To install `pg_query_state`, please apply corresponding patches `custom_signal_(PG_VERSION).patch` and `runtime_explain.patch` (or `runtime_explain_11.0.patch` for PG11) to reqired stable version of PostgreSQL and rebuild PostgreSQL.
-
+To install `pg_query_state`, please apply corresponding patches `custom_signal_(PG_VERSION).patch` and `runtime_explain_(PG_VERSION).patch` (or `runtime_explain.patch` for PG version <= 10.0) in `patches/` directory to reqired stable version of PostgreSQL and rebuild PostgreSQL.
 
 Then execute this in the module's directory:
 ```
@@ -35,7 +34,7 @@ Done!
 ## Tests
 Test using parallel sessions with Python 3+ compatible script:
 ```shell
-python tests/pg_qs_test_runner.py [OPTION]...
+python3 tests/pg_qs_test_runner.py [OPTION]...
 ```
 *prerequisite packages*:
 * `psycopg2` version 2.6 or later
@@ -48,7 +47,8 @@ python tests/pg_qs_test_runner.py [OPTION]...
 * *- -database* --- database name, default value is *postgres*
 * *- -user* --- user name, default value is *postgres*
 * *- -password* --- user's password, default value is empty
-* *- -tpc-ds* --- runs only stress tests on TPC-DS benchmark
+* *- -tpc-ds-setup* --- setup database to run TPC-DS benchmark
+* *- -tpc-ds-run* --- runs only stress tests on TPC-DS benchmark
 
 Or run all tests in `Docker` using:
 
@@ -61,24 +61,27 @@ docker-compose build
 docker-compose run tests
 ```
 
-There are different test levels: `hardcore`, `nightmare` (runs tests under `valgrind`) and `stress` (runs tests under `TPC-DS` load). 
+There are different test levels: `hardcore`, `nightmare` (runs tests under `valgrind`) and `stress` (runs tests under `TPC-DS` load).
 
 ## Function pg\_query\_state
 ```plpgsql
-pg_query_state(integer 	pid,
-			   verbose	boolean DEFAULT FALSE,
-			   costs 	boolean DEFAULT FALSE,
-			   timing 	boolean DEFAULT FALSE,
-			   buffers 	boolean DEFAULT FALSE,
-			   triggers	boolean DEFAULT FALSE,
-			   format	text 	DEFAULT 'text')
-	returns TABLE ( pid integer,
-	                frame_number integer,
-	                query_text text,
-	                plan text,
-	                leader_pid integer)
+pg_query_state(
+        integer     pid,
+        verbose     boolean DEFAULT FALSE,
+        costs       boolean DEFAULT FALSE,
+        timing      boolean DEFAULT FALSE,
+        buffers     boolean DEFAULT FALSE,
+        triggers    boolean DEFAULT FALSE,
+        format      text    DEFAULT 'text'
+) returns TABLE (
+    pid             integer,
+    frame_number    integer,
+    query_text      text,
+    plan            text,
+    leader_pid      integer
+)
 ```
-Extract current query state from backend with specified `pid`. Since parallel query can spawn multiple workers and function call causes nested subqueries so that state of execution may be viewed as stack of running queries, return value of `pg_query_state` has type `TABLE (pid integer, frame_number integer, query_text text, plan text, leader_pid integer)`. It represents tree structure consisting of leader process and its spawned workers identified by `pid`. Each worker refers to leader through `leader_pid` column. For leader process the value of this column is` null`. The state of each process is represented as stack of function calls. Each frame of that stack is specified as correspondence between `frame_number` starting from zero, `query_text` and `plan` with online statistics columns.
+extracts the current query state from backend with specified `pid`. Since parallel query can spawn multiple workers and function call causes nested subqueries so that state of execution may be viewed as stack of running queries, return value of `pg_query_state` has type `TABLE (pid integer, frame_number integer, query_text text, plan text, leader_pid integer)`. It represents tree structure consisting of leader process and its spawned workers identified by `pid`. Each worker refers to leader through `leader_pid` column. For leader process the value of this column is` null`. The state of each process is represented as stack of function calls. Each frame of that stack is specified as correspondence between `frame_number` starting from zero, `query_text` and `plan` with online statistics columns.
 
 Thus, user can see the states of main query and queries generated from function calls for leader process and all workers spawned from it.
 
@@ -95,7 +98,7 @@ Optional arguments:
 
 If callable backend is not executing any query the function prints INFO message about backend's state taken from `pg_stat_activity` view if it exists there.
 
-Calling role have to be superuser or member of the role whose backend is being called. Otherwise function prints ERROR message `permission denied`.
+**_Warning_**: Calling role have to be superuser or member of the role whose backend is being called. Otherwise function prints ERROR message `permission denied`.
 
 ## Configuration settings
 There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/static/config-setting.html) variables designed to toggle the whole module and the collecting of specific statistic parameters while query is running:
@@ -301,4 +304,5 @@ leader_pid   | (null)
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_query_state/issues) page.
 
 ## Authors
-Maksim Milyutin <m.milyutin@postgrespro.ru> Postgres Professional Ltd., Russia
+[Maksim Milyutin](https://github.com/maksm90)  
+Alexey Kondratov <a.kondratov@postgrespro.ru> Postgres Professional Ltd., Russia
