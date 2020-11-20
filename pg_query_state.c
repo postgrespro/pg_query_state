@@ -86,6 +86,7 @@ typedef struct
 	slock_t	 mutex;		/* protect concurrent access to `userid` */
 	Oid		 userid;
 	Latch	*caller;
+	pg_atomic_uint32 n_peers;
 } RemoteUserIdResult;
 
 static void SendCurrentUserId(void);
@@ -150,6 +151,7 @@ pg_qs_shmem_startup(void)
 		counterpart_userid = shm_toc_allocate(toc, sizeof(RemoteUserIdResult));
 		shm_toc_insert(toc, num_toc++, counterpart_userid);
 		SpinLockInit(&counterpart_userid->mutex);
+		pg_atomic_init_u32(&counterpart_userid->n_peers, 0);
 
 		params = shm_toc_allocate(toc, sizeof(pg_qs_params));
 		shm_toc_insert(toc, num_toc++, params);
@@ -481,6 +483,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 		shm_mq_msg		*msg;
 		List			*bg_worker_procs = NIL;
 		List			*msgs;
+		int              i;
 
 		if (!module_initialized)
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -512,6 +515,13 @@ pg_query_state(PG_FUNCTION_ARGS)
 		 */
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
+
+		for (i = 0; pg_atomic_read_u32(&counterpart_userid->n_peers) != 0 && i < MIN_TIMEOUT/1000; i++)
+		{
+			pg_usleep(1000000); /* wait one second */
+			CHECK_FOR_INTERRUPTS();
+		}
+		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
 		if (!(superuser() || GetUserId() == counterpart_user_id))
@@ -970,6 +980,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 			continue;
 		}
 
+		pg_atomic_add_fetch_u32(&counterpart_userid->n_peers, 1);
 		alive_procs = lappend(alive_procs, proc);
 	}
 
@@ -1023,7 +1034,6 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		shm_mq_detach(mqh);
 #endif
 	}
-
 	return result;
 
 signal_error:
@@ -1032,4 +1042,13 @@ signal_error:
 mq_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("error in message queue data transmitting")));
+}
+
+void
+DetachPeer(void)
+{
+	int n_peers = pg_atomic_fetch_sub_u32(&counterpart_userid->n_peers, 1);
+	if (n_peers <= 0)
+		ereport(LOG, (errcode(ERRCODE_INTERNAL_ERROR),
+					  errmsg("pg_query_state peer is not responding")));
 }

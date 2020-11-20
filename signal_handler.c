@@ -214,4 +214,5 @@ SendQueryState(void)
 		serialize_stack(msg->stack, qs_stack);
 		shm_mq_send(mqh, msglen, msg, false);
 	}
+	DetachPeer();
 }

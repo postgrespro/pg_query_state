@@ -69,5 +69,6 @@ extern shm_mq 	*mq;
 
 /* signal_handler.c */
 extern void SendQueryState(void);
+extern void DetachPeer(void);
 
 #endif
