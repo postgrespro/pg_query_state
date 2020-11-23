@@ -494,7 +494,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 							errmsg("attempt to extract state of current process")));
 
 		proc = BackendPidGetProc(pid);
-		if (!proc || proc->backendId == InvalidBackendId)
+		if (!proc || proc->backendId == InvalidBackendId || proc->databaseId == InvalidOid || proc->roleId == InvalidOid)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
 
@@ -885,7 +885,7 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	mq_receive_result = shm_mq_receive(mqh, &msg_len, (void **) &msg, false);
-	if (mq_receive_result != SHM_MQ_SUCCESS)
+	if (mq_receive_result != SHM_MQ_SUCCESS || msg == NULL || msg_len != sizeof(int) + msg->number*sizeof(pid_t))
 		goto mq_error;
 
 	for (i = 0; i < msg->number; i++)
