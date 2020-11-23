@@ -22,6 +22,9 @@
 #define TIMINIG_OFF_WARNING 1
 #define BUFFERS_OFF_WARNING 2
 
+#define MAX_TIMEOUT   5000 /* 5 seconds */
+
+
 /*
  * Result status on query state request from asked backend
  */

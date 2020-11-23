@@ -157,6 +157,11 @@ void
 SendQueryState(void)
 {
 	shm_mq_handle 	*mqh;
+	instr_time	start_time;
+	instr_time	cur_time;
+	long 		delay = MAX_TIMEOUT;
+
+	INSTR_TIME_SET_CURRENT(start_time);
 
 	/* wait until caller sets this process as sender to message queue */
 	for (;;)
@@ -165,12 +170,22 @@ SendQueryState(void)
 			break;
 
 #if PG_VERSION_NUM < 100000
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
 #elif PG_VERSION_NUM < 120000
-		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_IPC);
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay, PG_WAIT_IPC);
 #else
-		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0, PG_WAIT_IPC);
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT, delay, PG_WAIT_IPC);
 #endif
+		INSTR_TIME_SET_CURRENT(cur_time);
+		INSTR_TIME_SUBTRACT(cur_time, start_time);
+
+		delay = MAX_TIMEOUT - (long) INSTR_TIME_GET_MILLISEC(cur_time);
+		if (delay <= 0)
+		{
+			elog(WARNING, "pg_query_state: failed to receive request from leader");
+			DetachPeer();
+			return;
+		}
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}

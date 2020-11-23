@@ -36,8 +36,6 @@ PG_MODULE_MAGIC;
 #define	PG_QS_MODULE_KEY	0xCA94B108
 #define	PG_QUERY_STATE_KEY	0
 
-#define MIN_TIMEOUT   5000
-
 #define TEXT_CSTR_CMP(text, cstr) \
 	(memcmp(VARDATA(text), (cstr), VARSIZE(text) - VARHDRSZ))
 
@@ -516,11 +514,14 @@ pg_query_state(PG_FUNCTION_ARGS)
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
 
-		for (i = 0; pg_atomic_read_u32(&counterpart_userid->n_peers) != 0 && i < MIN_TIMEOUT/1000; i++)
+		for (i = 0; pg_atomic_read_u32(&counterpart_userid->n_peers) != 0 && i <= MAX_TIMEOUT/1000; i++)
 		{
 			pg_usleep(1000000); /* wait one second */
 			CHECK_FOR_INTERRUPTS();
 		}
+		if (i > MAX_TIMEOUT/1000)
+			elog(WARNING, "pg_query_state: last request was interrupted");
+
 		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
@@ -741,14 +742,14 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 {
 	int 		rc = 0;
 	long 		delay = timeout;
+	instr_time	start_time;
+	instr_time	cur_time;
+
+	INSTR_TIME_SET_CURRENT(start_time);
 
 	for (;;)
 	{
-		instr_time	start_time;
-		instr_time	cur_time;
 		shm_mq_result mq_receive_result;
-
-		INSTR_TIME_SET_CURRENT(start_time);
 
 		mq_receive_result = shm_mq_receive(mqh, nbytesp, datap, true);
 		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
@@ -772,6 +773,8 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 		INSTR_TIME_SUBTRACT(cur_time, start_time);
 
 		delay = timeout - (long) INSTR_TIME_GET_MILLISEC(cur_time);
+		if (delay <= 0)
+			return SHM_MQ_WOULD_BLOCK;
 
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
@@ -970,6 +973,9 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		PGPROC 	*proc = (PGPROC *) lfirst(iter);
 		if (!proc || !proc->pid)
 			continue;
+
+		pg_atomic_add_fetch_u32(&counterpart_userid->n_peers, 1);
+
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
 									proc->backendId);
@@ -980,7 +986,6 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 			continue;
 		}
 
-		pg_atomic_add_fetch_u32(&counterpart_userid->n_peers, 1);
 		alive_procs = lappend(alive_procs, proc);
 	}
 
@@ -1018,7 +1023,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		mq_receive_result = shm_mq_receive_with_timeout(mqh,
 														&len,
 														(void **) &msg,
-														MIN_TIMEOUT);
+														MAX_TIMEOUT);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
 			/* counterpart is died, not consider it */
 			continue;
