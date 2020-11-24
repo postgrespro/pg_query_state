@@ -159,7 +159,7 @@ SendQueryState(void)
 	shm_mq_handle 	*mqh;
 	instr_time	start_time;
 	instr_time	cur_time;
-	long 		delay = MAX_SND_TIMEOUT;
+	int64 		delay = MAX_SND_TIMEOUT;
 
 	INSTR_TIME_SET_CURRENT(start_time);
 
@@ -179,7 +179,7 @@ SendQueryState(void)
 		INSTR_TIME_SET_CURRENT(cur_time);
 		INSTR_TIME_SUBTRACT(cur_time, start_time);
 
-		delay = MAX_SND_TIMEOUT - (long) INSTR_TIME_GET_MILLISEC(cur_time);
+		delay = MAX_SND_TIMEOUT - (int64) INSTR_TIME_GET_MILLISEC(cur_time);
 		if (delay <= 0)
 		{
 			elog(WARNING, "pg_query_state: failed to receive request from leader");

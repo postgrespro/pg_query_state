@@ -747,10 +747,10 @@ static shm_mq_result
 shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 							Size *nbytesp,
 							void **datap,
-							long timeout)
+							int64 timeout)
 {
 	int 		rc = 0;
-	long 		delay = timeout;
+	int64 		delay = timeout;
 	instr_time	start_time;
 	instr_time	cur_time;
 
@@ -781,7 +781,7 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 		INSTR_TIME_SET_CURRENT(cur_time);
 		INSTR_TIME_SUBTRACT(cur_time, start_time);
 
-		delay = timeout - (long) INSTR_TIME_GET_MILLISEC(cur_time);
+		delay = timeout - (int64) INSTR_TIME_GET_MILLISEC(cur_time);
 		if (delay <= 0)
 			return SHM_MQ_WOULD_BLOCK;
 
@@ -967,6 +967,8 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 	/* initialize message queue that will transfer query states */
 	mq = shm_mq_create(mq, QUEUE_SIZE);
+	shm_mq_set_sender(mq, leader);
+	shm_mq_set_receiver(mq, MyProc);
 
 	/*
 	 * send signal `QueryStatePollReason` to all processes and define all alive
@@ -999,8 +1001,6 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	}
 
 	/* extract query state from leader process */
-	shm_mq_set_sender(mq, leader);
-	shm_mq_set_receiver(mq, MyProc);
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
