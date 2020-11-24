@@ -481,7 +481,8 @@ pg_query_state(PG_FUNCTION_ARGS)
 		shm_mq_msg		*msg;
 		List			*bg_worker_procs = NIL;
 		List			*msgs;
-		int              i;
+		instr_time		 start_time;
+		instr_time		 cur_time;
 
 		if (!module_initialized)
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -514,14 +515,22 @@ pg_query_state(PG_FUNCTION_ARGS)
 		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
 		LockAcquire(&tag, ExclusiveLock, false, false);
 
-		for (i = 0; pg_atomic_read_u32(&counterpart_userid->n_peers) != 0 && i <= MAX_TIMEOUT/1000; i++)
+		INSTR_TIME_SET_CURRENT(start_time);
+
+		while (pg_atomic_read_u32(&counterpart_userid->n_peers) != 0)
 		{
 			pg_usleep(1000000); /* wait one second */
 			CHECK_FOR_INTERRUPTS();
-		}
-		if (i > MAX_TIMEOUT/1000)
-			elog(WARNING, "pg_query_state: last request was interrupted");
 
+			INSTR_TIME_SET_CURRENT(cur_time);
+			INSTR_TIME_SUBTRACT(cur_time, start_time);
+
+			if (INSTR_TIME_GET_MILLISEC(cur_time) > MAX_RCV_TIMEOUT)
+			{
+				elog(WARNING, "pg_query_state: last request was interrupted");
+				break;
+			}
+		}
 		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
@@ -1023,7 +1032,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		mq_receive_result = shm_mq_receive_with_timeout(mqh,
 														&len,
 														(void **) &msg,
-														MAX_TIMEOUT);
+														MAX_RCV_TIMEOUT);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
 			/* counterpart is died, not consider it */
 			continue;

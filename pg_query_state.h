@@ -22,7 +22,9 @@
 #define TIMINIG_OFF_WARNING 1
 #define BUFFERS_OFF_WARNING 2
 
-#define MAX_TIMEOUT   5000 /* 5 seconds */
+/* Receive timeout should be larger than send timeout to let workers stop waiting before polling process */
+#define MAX_RCV_TIMEOUT   6000 /* 6 seconds */
+#define MAX_SND_TIMEOUT   3000 /* 3 seconds */
 
 
 /*
