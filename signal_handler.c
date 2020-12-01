@@ -161,6 +161,7 @@ SendQueryState(void)
 	instr_time	cur_time;
 	int64 		delay = MAX_SND_TIMEOUT;
 	int         reqid = params->reqid;
+	LOCKTAG		tag;
 
 	INSTR_TIME_SET_CURRENT(start_time);
 
@@ -190,9 +191,17 @@ SendQueryState(void)
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
+
+	LockShmem(&tag, PG_QS_SND_KEY);
+
 	elog(DEBUG1, "Worker %d receives pg_query_state request from %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	mqh = shm_mq_attach(mq, NULL, NULL);
 
+	if (reqid != params->reqid || shm_mq_get_sender(mq) != MyProc)
+	{
+		UnlockShmem(&tag);
+		return;
+	}
 	/* check if module is enabled */
 	if (!pg_qs_enable)
 	{
@@ -233,4 +242,5 @@ SendQueryState(void)
 	}
 	elog(DEBUG1, "Worker %d sends response for pg_query_state to %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	DetachPeer();
+	UnlockShmem(&tag);
 }

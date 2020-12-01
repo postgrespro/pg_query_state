@@ -33,9 +33,6 @@
 PG_MODULE_MAGIC;
 #endif
 
-#define	PG_QS_MODULE_KEY	0xCA94B108
-#define	PG_QUERY_STATE_KEY	0
-
 #define TEXT_CSTR_CMP(text, cstr) \
 	(memcmp(VARDATA(text), (cstr), VARSIZE(text) - VARHDRSZ))
 
@@ -78,6 +75,7 @@ static const char		*be_state_str[] = {						/* BackendState -> string repr */
 							"idle in transaction (aborted)",	/* STATE_IDLEINTRANSACTION_ABORTED */
 							"disabled",							/* STATE_DISABLED */
 						};
+static int              reqid = 0;
 
 typedef struct
 {
@@ -376,19 +374,28 @@ search_be_status(int pid)
 	return NULL;
 }
 
-/*
- * Init userlock
- */
-static void
-init_lock_tag(LOCKTAG *tag, uint32 key)
+
+void
+UnlockShmem(LOCKTAG *tag)
 {
+	LockRelease(tag, ExclusiveLock, false);
+}
+
+void
+LockShmem(LOCKTAG *tag, uint32 key)
+{
+	LockAcquireResult result;
 	tag->locktag_field1 = PG_QS_MODULE_KEY;
 	tag->locktag_field2 = key;
 	tag->locktag_field3 = 0;
 	tag->locktag_field4 = 0;
 	tag->locktag_type = LOCKTAG_USERLOCK;
 	tag->locktag_lockmethodid = USER_LOCKMETHOD;
+	result = LockAcquire(tag, ExclusiveLock, false, false);
+	Assert(result == LOCKACQUIRE_OK);
 }
+
+
 
 /*
  * Structure of stack frame of fucntion call which transfers through message queue
@@ -512,8 +519,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 		 * init and acquire lock so that any other concurrent calls of this fuction
 		 * can not occupy shared queue for transfering query state
 		 */
-		init_lock_tag(&tag, PG_QUERY_STATE_KEY);
-		LockAcquire(&tag, ExclusiveLock, false, false);
+		LockShmem(&tag, PG_QS_RCV_KEY);
 
 		INSTR_TIME_SET_CURRENT(start_time);
 
@@ -532,6 +538,8 @@ pg_query_state(PG_FUNCTION_ARGS)
 			}
 		}
 		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
+		params->reqid = ++reqid;
+		pg_write_barrier();
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
 		if (!(superuser() || GetUserId() == counterpart_user_id))
@@ -553,7 +561,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 		if (list_length(msgs) == 0)
 		{
 			elog(WARNING, "backend does not reply");
-			LockRelease(&tag, ExclusiveLock, false);
+			UnlockShmem(&tag);
 			SRF_RETURN_DONE(funcctx);
 		}
 
@@ -570,12 +578,12 @@ pg_query_state(PG_FUNCTION_ARGS)
 					else
 						elog(INFO, "backend is not running query");
 
-					LockRelease(&tag, ExclusiveLock, false);
+					UnlockShmem(&tag);
 					SRF_RETURN_DONE(funcctx);
 				}
 			case STAT_DISABLED:
 				elog(INFO, "query execution statistics disabled");
-				LockRelease(&tag, ExclusiveLock, false);
+				UnlockShmem(&tag);
 				SRF_RETURN_DONE(funcctx);
 			case QS_RETURNED:
 				{
@@ -636,7 +644,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 					TupleDescInitEntry(tupdesc, (AttrNumber) 5, "leader_pid", INT4OID, -1, 0);
 					funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-					LockRelease(&tag, ExclusiveLock, false);
+					UnlockShmem(&tag);
 					MemoryContextSwitchTo(oldcontext);
 				}
 				break;
@@ -828,6 +836,7 @@ extract_running_bgworkers(PlanState *node, List **result)
 
 typedef struct
 {
+	int     reqid;
 	int		number;
 	pid_t	pids[FLEXIBLE_ARRAY_MEMBER];
 } BgWorkerPids;
@@ -841,6 +850,9 @@ SendBgWorkerPids(void)
 	int				 msg_len;
 	int				 i;
 	shm_mq_handle 	*mqh;
+	LOCKTAG		     tag;
+
+	LockShmem(&tag, PG_QS_SND_KEY);
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
 
@@ -856,6 +868,7 @@ SendBgWorkerPids(void)
 	msg_len = offsetof(BgWorkerPids, pids)
 			+ sizeof(pid_t) * list_length(all_workers);
 	msg = palloc(msg_len);
+	msg->reqid = params->reqid;
 	msg->number = list_length(all_workers);
 	i = 0;
 	foreach(iter, all_workers)
@@ -867,6 +880,7 @@ SendBgWorkerPids(void)
 	}
 
 	shm_mq_send(mqh, msg_len, msg, false);
+	UnlockShmem(&tag);
 }
 
 /*
@@ -882,14 +896,17 @@ GetRemoteBackendWorkers(PGPROC *proc)
 	Size			 msg_len;
 	int				 i;
 	List			*result = NIL;
+	LOCKTAG			 tag;
 
 	Assert(proc && proc->backendId != InvalidBackendId);
 	Assert(WorkerPollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
 
+	LockShmem(&tag, PG_QS_SND_KEY);
 	mq = shm_mq_create(mq, QUEUE_SIZE);
 	shm_mq_set_sender(mq, proc);
 	shm_mq_set_receiver(mq, MyProc);
+	UnlockShmem(&tag);
 
 	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
 	if (sig_result == -1)
@@ -897,7 +914,7 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	mq_receive_result = shm_mq_receive(mqh, &msg_len, (void **) &msg, false);
-	if (mq_receive_result != SHM_MQ_SUCCESS || msg == NULL || msg_len != sizeof(int) + msg->number*sizeof(pid_t))
+	if (mq_receive_result != SHM_MQ_SUCCESS || msg == NULL || msg->reqid != reqid || msg_len != offsetof(BgWorkerPids, pids) + msg->number*sizeof(pid_t))
 		goto mq_error;
 
 	for (i = 0; i < msg->number; i++)
@@ -952,7 +969,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	shm_mq_result	 mq_receive_result;
 	shm_mq_msg		*msg;
 	Size			 len;
-	static int       reqid = 0;
+	LOCKTAG			 tag;
 
 	Assert(QueryStatePollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
@@ -964,13 +981,14 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	params->buffers = buffers;
 	params->triggers = triggers;
 	params->format = format;
-	params->reqid = ++reqid;
 	pg_write_barrier();
 
 	/* initialize message queue that will transfer query states */
+	LockShmem(&tag, PG_QS_SND_KEY);
 	mq = shm_mq_create(mq, QUEUE_SIZE);
 	shm_mq_set_sender(mq, leader);
 	shm_mq_set_receiver(mq, MyProc);
+	UnlockShmem(&tag);
 
 	/*
 	 * send signal `QueryStatePollReason` to all processes and define all alive
@@ -1028,11 +1046,13 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 		/* prepare message queue to transfer data */
 		elog(DEBUG1, "Wait response from worker %d", proc->pid);
+		LockShmem(&tag, PG_QS_SND_KEY);
 		mq = shm_mq_create(mq, QUEUE_SIZE);
 		shm_mq_set_sender(mq, proc);
 		shm_mq_set_receiver(mq, MyProc);	/* this function notifies the
 											   counterpart to come into data
 											   transfer */
+		UnlockShmem(&tag);
 
 		/* retrieve result data from message queue */
 		mqh = shm_mq_attach(mq, NULL, NULL);

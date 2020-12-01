@@ -22,6 +22,10 @@
 #define TIMINIG_OFF_WARNING 1
 #define BUFFERS_OFF_WARNING 2
 
+#define	PG_QS_MODULE_KEY	0xCA94B108
+#define	PG_QS_RCV_KEY       0
+#define	PG_QS_SND_KEY       1
+
 /* Receive timeout should be larger than send timeout to let workers stop waiting before polling process */
 #define MAX_RCV_TIMEOUT   6000 /* 6 seconds */
 #define MAX_SND_TIMEOUT   3000 /* 3 seconds */
@@ -34,7 +38,7 @@ typedef enum
 {
 	QUERY_NOT_RUNNING,		/* Backend doesn't execute any query */
 	STAT_DISABLED,			/* Collection of execution statistics is disabled */
-	QS_RETURNED				/* Backend succesfully returned its query state */
+	QS_RETURNED				/* Backend succx[esfully returned its query state */
 } PG_QS_RequestResult;
 
 /*
@@ -48,6 +52,7 @@ typedef struct
 	PG_QS_RequestResult	result_code;
 	int		warnings;						/* bitmap of warnings */
 	int		stack_depth;
+	char  filler[1024*1024];
 	char	stack[FLEXIBLE_ARRAY_MEMBER];	/* sequencially laid out stack frames in form of
 												text records */
 } shm_mq_msg;
@@ -77,5 +82,7 @@ extern shm_mq 	*mq;
 /* signal_handler.c */
 extern void SendQueryState(void);
 extern void DetachPeer(void);
+extern void UnlockShmem(LOCKTAG *tag);
+extern void LockShmem(LOCKTAG *tag, uint32 key);
 
 #endif
