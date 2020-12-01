@@ -42,6 +42,7 @@ typedef enum
  */
 typedef struct
 {
+	int     reqid;
 	int		length;							/* size of message record, for sanity check */
 	PGPROC	*proc;
 	PG_QS_RequestResult	result_code;
@@ -56,6 +57,7 @@ typedef struct
 /* pg_query_state arguments */
 typedef struct
 {
+	int     reqid;
 	bool 	verbose;
 	bool	costs;
 	bool	timing;

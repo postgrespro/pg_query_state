@@ -952,6 +952,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	shm_mq_result	 mq_receive_result;
 	shm_mq_msg		*msg;
 	Size			 len;
+	static int       reqid = 0;
 
 	Assert(QueryStatePollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
@@ -963,6 +964,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	params->buffers = buffers;
 	params->triggers = triggers;
 	params->format = format;
+	params->reqid = ++reqid;
 	pg_write_barrier();
 
 	/* initialize message queue that will transfer query states */
@@ -1002,9 +1004,13 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 	/* extract query state from leader process */
 	mqh = shm_mq_attach(mq, NULL, NULL);
+	elog(DEBUG1, "Wait response from leader %d", leader->pid);
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		goto mq_error;
+	if (msg->reqid != reqid)
+		goto mq_error;
+
 	Assert(len == msg->length);
 	result = lappend(result, copy_msg(msg));
 #if PG_VERSION_NUM < 100000
@@ -1021,6 +1027,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 		PGPROC 			*proc = (PGPROC *) lfirst(iter);
 
 		/* prepare message queue to transfer data */
+		elog(DEBUG1, "Wait response from worker %d", proc->pid);
 		mq = shm_mq_create(mq, QUEUE_SIZE);
 		shm_mq_set_sender(mq, proc);
 		shm_mq_set_receiver(mq, MyProc);	/* this function notifies the
@@ -1034,9 +1041,12 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 														(void **) &msg,
 														MAX_RCV_TIMEOUT);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
+		{
 			/* counterpart is died, not consider it */
-			continue;
-
+			goto mq_error;
+		}
+		if (msg->reqid != reqid)
+			goto mq_error;
 		Assert(len == msg->length);
 
 		/* aggregate result data */
@@ -1054,6 +1064,11 @@ signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("invalid send signal")));
 mq_error:
+#if PG_VERSION_NUM < 100000
+	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("error in message queue data transmitting")));
 }

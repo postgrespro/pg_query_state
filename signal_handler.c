@@ -160,6 +160,7 @@ SendQueryState(void)
 	instr_time	start_time;
 	instr_time	cur_time;
 	int64 		delay = MAX_SND_TIMEOUT;
+	int         reqid = params->reqid;
 
 	INSTR_TIME_SET_CURRENT(start_time);
 
@@ -189,13 +190,13 @@ SendQueryState(void)
 		CHECK_FOR_INTERRUPTS();
 		ResetLatch(MyLatch);
 	}
-
+	elog(DEBUG1, "Worker %d receives pg_query_state request from %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	mqh = shm_mq_attach(mq, NULL, NULL);
 
 	/* check if module is enabled */
 	if (!pg_qs_enable)
 	{
-		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
+		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -203,7 +204,7 @@ SendQueryState(void)
 	/* check if backend doesn't execute any query */
 	else if (list_length(QueryDescStack) == 0)
 	{
-		shm_mq_msg msg = { BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
+		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
 
 		shm_mq_send(mqh, msg.length, &msg, false);
 	}
@@ -215,6 +216,7 @@ SendQueryState(void)
 		int				msglen = sizeof(shm_mq_msg) + serialized_stack_length(qs_stack);
 		shm_mq_msg		*msg = palloc(msglen);
 
+		msg->reqid = reqid;
 		msg->length = msglen;
 		msg->proc = MyProc;
 		msg->result_code = QS_RETURNED;
@@ -229,5 +231,6 @@ SendQueryState(void)
 		serialize_stack(msg->stack, qs_stack);
 		shm_mq_send(mqh, msglen, msg, false);
 	}
+	elog(DEBUG1, "Worker %d sends response for pg_query_state to %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	DetachPeer();
 }
