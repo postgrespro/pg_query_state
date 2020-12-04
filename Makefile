@@ -37,7 +37,7 @@ else
 endif
 
 versioncheck:
-	if [ -f expected/$(ISOLATIONCHECKS).out && -f expected/$(ISOLATIONCHECKS)_2.out] ; \
+	if [ -f expected/$(ISOLATIONCHECKS).out && -f expected/$(ISOLATIONCHECKS)_2.out ] ; \
 	then \
 		cp expected/$(ISOLATIONCHECKS).out.$(VERSION) cat expected/$(ISOLATIONCHECKS).out ; \
 		cp expected/$(ISOLATIONCHECKS)_2.out.$(VERSION) cat expected/$(ISOLATIONCHECKS)_2.out ; \
