@@ -11,7 +11,7 @@ PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 ISOLATIONCHECKS=corner_cases
 
 EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
-	Dockerfile ./tests/*.pyc expected/$(ISOLATIONCHECKS).out expected/$(ISOLATIONCHECKS)_2.out
+	Dockerfile ./tests/*.pyc 
 
 ifdef USE_PGXS
 PG_CONFIG ?= pg_config
@@ -27,24 +27,9 @@ endif
 $(EXTENSION)--$(EXTVERSION).sql: init.sql
 	cat $^ > $@
 
-check: versioncheck isolationcheck
+check: isolationcheck
 
-VERSION = $(MAJORVERSION)
-ifneq (,$(findstring $(MAJORVERSION), 9.5 9.6 10 11 12))
-	VERSION = old
-else
-	VERSION = new
-endif
-
-versioncheck:
-	if [ -f expected/$(ISOLATIONCHECKS).out ] && [ -f expected/$(ISOLATIONCHECKS)_2.out ] ; \
-	then \
-		cp expected/$(ISOLATIONCHECKS).out.$(VERSION) cat expected/$(ISOLATIONCHECKS).out ; \
-		cp expected/$(ISOLATIONCHECKS)_2.out.$(VERSION) cat expected/$(ISOLATIONCHECKS)_2.out ; \
-	else \
-		cp expected/$(ISOLATIONCHECKS).out.$(VERSION) expected/$(ISOLATIONCHECKS).out ; \
-		cp expected/$(ISOLATIONCHECKS)_2.out.$(VERSION) expected/$(ISOLATIONCHECKS)_2.out ; \
-	fi
+installcheck: isolationcheck-install-force
 
 submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all
@@ -52,16 +37,17 @@ submake-isolation:
 isolationcheck: | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_check) \
-	  --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf \
+	  --temp-config $(top_srcdir)/$(subdir)/test.conf \
       --outputdir=isolation_output \
 	$(ISOLATIONCHECKS)
 
 isolationcheck-install-force: all | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_installcheck) \
+      --temp-config $(top_srcdir)/$(subdir)/test.conf \
       --outputdir=isolation_output \
 	$(ISOLATIONCHECKS)
 
-.PHONY: versioncheck isolationcheck isolationcheck-install-force check
+.PHONY: isolationcheck isolationcheck-install-force check installcheck
 
 temp-install: EXTRA_INSTALL=contrib/pg_query_state
