@@ -9,14 +9,12 @@ DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 
 ISOLATIONCHECKS = corner_cases
-ISOLATIONCHECKS_OPTS = --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf 
-ISOLATIONCHECKS_OPTS += --outputdir=isolation_output 
 REGRESSCHECKS=corner_cases
-REGRESSION_OPTS = --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf 
-REGRESSION_OPTS += --outputdir=isolation_output 
+REGRESSION_OPTS = --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf
+REGRESSION_OPTS += --outputdir=isolation_output
 
 EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
-	Dockerfile ./tests/*.pyc 
+	Dockerfile ./tests/*.pyc
 
 ifdef USE_PGXS
 PG_CONFIG ?= pg_config
@@ -45,10 +43,9 @@ isolationcheck: | submake-isolation temp-install
 	  $(REGRESSION_OPTS) \
 	$(REGRESSCHECKS)
 
-isolationcheck-install-force:| submake-isolation temp-install
+isolationcheck-install-force:
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_installcheck) \
-	  $(ISOLATIONCHECKS_OPTS) \
 	$(ISOLATIONCHECKS)
 
 .PHONY: isolationcheck check installcheck isolationcheck-install-force
