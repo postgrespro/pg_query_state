@@ -13,7 +13,7 @@ step s1_save_pid: select save_own_pid(0);
 save_own_pid   
 
                
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 pg_query_state 
 
@@ -24,7 +24,7 @@ save_own_pid
 
                
 step s1_disable_pg_qs: set pg_query_state.enable to off;
-INFO:  query execution statistics disabled
+s2: INFO:  query execution statistics disabled
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 pg_query_state 
 
@@ -36,7 +36,7 @@ step s1_save_pid: select save_own_pid(0);
 save_own_pid   
 
                
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 pg_query_state 
 
@@ -48,7 +48,7 @@ step s1_save_pid: select save_own_pid(0);
 save_own_pid   
 
                
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 pg_query_state 
 
@@ -62,3 +62,6 @@ save_own_pid
                
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 ERROR:  permission denied
+unused step name: s1_enable_pg_qs
+unused step name: s1_pg_qs_counterpart
+unused step name: s2_save_pid
