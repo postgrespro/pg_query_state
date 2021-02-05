@@ -63,6 +63,11 @@ docker-compose run tests
 
 There are different test levels: `hardcore`, `nightmare` (runs tests under `valgrind`) and `stress` (runs tests under `TPC-DS` load).
 
+There are different files of expected results for regression tests are suitable in `expected/` directory. 
+* corner_cases.out --- for PG version <= 11.0
+* corner_cases.out_2 --- for PG version = 12.0
+* corner_cases.out_3 --- for PG version = 13.0
+
 ## Function pg\_query\_state
 ```plpgsql
 pg_query_state(
