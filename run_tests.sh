@@ -99,12 +99,16 @@ if [ "$LEVEL" = "scan-build" ] || \
 
 fi
 
+# XXX: Hackish way to make possible to run all contrib tests
+mkdir $CUSTOM_PG_SRC/contrib/pg_query_state
+cp -r * $CUSTOM_PG_SRC/contrib/pg_query_state/
+
 # don't forget to "make clean"
-make USE_PGXS=1 clean
+make -C $CUSTOM_PG_SRC/contrib/pg_query_state clean
 
 # build and install extension (using PG_CPPFLAGS and SHLIB_LINK for gcov)
-make USE_PGXS=1 PG_CPPFLAGS="-coverage" SHLIB_LINK="-coverage"
-make USE_PGXS=1 install
+make -C $CUSTOM_PG_SRC/contrib/pg_query_state PG_CPPFLAGS="-coverage" SHLIB_LINK="-coverage"
+make -C $CUSTOM_PG_SRC/contrib/pg_query_state install
 
 # initialize database
 initdb -D $PGDATA
@@ -136,7 +140,7 @@ if [ $status -ne 0 ]; then cat /tmp/postgres.log; exit 1; fi
 
 # run regression tests
 export PG_REGRESS_DIFF_OPTS="-w -U3" # for alpine's diff (BusyBox)
-make USE_PGXS=1 installcheck || status=$?
+make -C $CUSTOM_PG_SRC/contrib/pg_query_state installcheck || status=$?
 
 # show diff if it exists
 if [ -f regression.diffs ]; then cat regression.diffs; fi
@@ -169,7 +173,7 @@ fi
 if [ $status -ne 0 ]; then exit 1; fi
 set +e
 # generate *.gcov files
-gcov *.c *.h
+gcov $CUSTOM_PG_SRC/contrib/pg_query_state/*.c $CUSTOM_PG_SRC/contrib/pg_query_state/*.h
 
 set +ux
 

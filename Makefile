@@ -25,9 +25,12 @@ endif
 $(EXTENSION)--$(EXTVERSION).sql: init.sql
 	cat $^ > $@
 
+ISOLATIONCHECKS=corner_cases
+
 check: isolationcheck
 
-ISOLATIONCHECKS=corner_cases
+installcheck:
+	$(pg_isolation_regress_installcheck) $(ISOLATIONCHECKS)
 
 submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all
@@ -37,14 +40,6 @@ isolationcheck: | submake-isolation temp-install
 	$(pg_isolation_regress_check) \
 	  --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf \
       --outputdir=isolation_output \
-	  $(ISOLATIONCHECKS)
-
-isolationcheck-install-force: all | submake-isolation temp-install
-	$(MKDIR_P) isolation_output
-	$(pg_isolation_regress_installcheck) \
-      --outputdir=isolation_output \
-	  $(ISOLATIONCHECKS)
-
-.PHONY: isolationcheck isolationcheck-install-force check
+	$(ISOLATIONCHECKS)
 
 temp-install: EXTRA_INSTALL=contrib/pg_query_state
