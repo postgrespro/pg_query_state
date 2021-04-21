@@ -393,6 +393,7 @@ LockShmem(LOCKTAG *tag, uint32 key)
 	tag->locktag_lockmethodid = USER_LOCKMETHOD;
 	result = LockAcquire(tag, ExclusiveLock, false, false);
 	Assert(result == LOCKACQUIRE_OK);
+	elog(DEBUG1, "LockAcquireResult is not OK %d", result);
 }
 
 
