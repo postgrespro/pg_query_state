@@ -138,6 +138,8 @@ fi
 # something's wrong, exit now!
 if [ $status -ne 0 ]; then cat /tmp/postgres.log; exit 1; fi
 
+cd $CUSTOM_PG_SRC
+
 # run regression tests
 export PG_REGRESS_DIFF_OPTS="-w -U3" # for alpine's diff (BusyBox)
 make -C $CUSTOM_PG_SRC/contrib/pg_query_state installcheck || status=$?
@@ -145,10 +147,12 @@ make -C $CUSTOM_PG_SRC/contrib/pg_query_state installcheck || status=$?
 # show diff if it exists
 if [ -f regression.diffs ]; then cat regression.diffs; fi
 
+cd $CUSTOM_PG_SRC/contrib/pg_query_state
+
 # run python tests
 set +x -e
 python3 -m venv /tmp/env && source /tmp/env/bin/activate &&
-pip install -r tests/requirements.txt
+pip install -r ./tests/requirements.txt
 set -e #exit virtualenv with error code
 python tests/pg_qs_test_runner.py --port $PGPORT
 if [[ "$USE_TPCDS" == "1" ]]; then
