@@ -138,16 +138,13 @@ fi
 # something's wrong, exit now!
 if [ $status -ne 0 ]; then cat /tmp/postgres.log; exit 1; fi
 
-cd $CUSTOM_PG_SRC
-
 # run regression tests
 export PG_REGRESS_DIFF_OPTS="-w -U3" # for alpine's diff (BusyBox)
-make -C $CUSTOM_PG_SRC/contrib/pg_query_state installcheck || status=$?
+cd $CUSTOM_PG_SRC/contrib/pg_query_state
+make installcheck || status=$?
 
 # show diff if it exists
 if [ -f regression.diffs ]; then cat regression.diffs; fi
-
-cd $CUSTOM_PG_SRC/contrib/pg_query_state
 
 # run python tests
 set +x -e
