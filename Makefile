@@ -22,29 +22,32 @@ include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
+EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/test.conf
+
 $(EXTENSION)--$(EXTVERSION).sql: init.sql
 	cat $^ > $@
 
-check: isolationcheck
-
 ISOLATIONCHECKS=corner_cases
 
-submake-isolation:
-	$(MAKE) -C $(top_builddir)/src/test/isolation all
+check: isolationcheck
+
+installcheck: isolationcheck-install-force
 
 isolationcheck: | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_check) \
 	  --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf \
       --outputdir=isolation_output \
-	  $(ISOLATIONCHECKS)
+	$(ISOLATIONCHECKS)
 
-isolationcheck-install-force: all | submake-isolation temp-install
-	$(MKDIR_P) isolation_output
+isolationcheck-install-force: all | submake-isolation submake-pg_query_state temp-install
 	$(pg_isolation_regress_installcheck) \
-      --outputdir=isolation_output \
-	  $(ISOLATIONCHECKS)
+	    $(ISOLATIONCHECKS)
 
-.PHONY: isolationcheck isolationcheck-install-force check
+submake-isolation:
+	$(MAKE) -C $(top_builddir)/src/test/isolation all
+
+submake-pg_query_state:
+	$(MAKE) -C $(top_builddir)/contrib/pg_query_state
 
 temp-install: EXTRA_INSTALL=contrib/pg_query_state

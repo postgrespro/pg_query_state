@@ -57,6 +57,8 @@ export LEVEL=hardcore
 export USE_TPCDS=1
 export PG_VERSION=12
 
+./mk_dockerfile.sh
+
 docker-compose build
 docker-compose run tests
 ```

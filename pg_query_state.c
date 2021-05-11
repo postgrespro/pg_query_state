@@ -393,6 +393,7 @@ LockShmem(LOCKTAG *tag, uint32 key)
 	tag->locktag_lockmethodid = USER_LOCKMETHOD;
 	result = LockAcquire(tag, ExclusiveLock, false, false);
 	Assert(result == LOCKACQUIRE_OK);
+	elog(DEBUG1, "LockAcquireResult is not OK %d", result);
 }
 
 
@@ -677,11 +678,19 @@ pg_query_state(PG_FUNCTION_ARGS)
 		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
 		/* increment cursor */
+#if PG_VERSION_NUM >= 130000
+		p_state->frame_cursor = lnext(p_state->stack, p_state->frame_cursor);
+#else
 		p_state->frame_cursor = lnext(p_state->frame_cursor);
+#endif
 		p_state->frame_index++;
 
 		if (p_state->frame_cursor == NULL)
+#if PG_VERSION_NUM >= 130000
+			fctx->proc_cursor = lnext(fctx->procs, fctx->proc_cursor);
+#else
 			fctx->proc_cursor = lnext(fctx->proc_cursor);
+#endif
 
 		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 	}

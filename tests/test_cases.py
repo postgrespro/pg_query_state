@@ -114,6 +114,11 @@ def test_nested_call(config):
 	util_conn.commit()
 
 	qs, notices = common.onetime_query_state(config, acon, call_function)
+
+	# Print some debug output before assertion
+	if len(qs) < 2:
+		print(qs)
+
 	assert len(qs) == 2 \
 		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
 		and qs[0][1] == 0 and qs[1][1] == 1 \
