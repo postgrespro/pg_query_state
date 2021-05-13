@@ -10,4 +10,4 @@ cscope.out
 tags
 Dockerfile
 tmp_stress
-
+/isolation_output/
