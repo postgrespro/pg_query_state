@@ -27,7 +27,7 @@ typedef struct
 	char		*plan;
 } stack_frame;
 
-static void send_msg_by_bits(shm_mq_handle *mqh, Size nbytes, const void *data);
+static void send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data);
 
 /*
  *	Get List of stack_frames as a stack of function calls starting from outermost call.
@@ -150,18 +150,9 @@ serialize_stack(char *dest, List *qs_stack)
 		serialize_stack_frame(&dest, qs_frame);
 	}
 }
-// ----------------- DEBUG -----------------
-static void
-print_sent_bytes(int num, char *src, int offset)
-{
-	elog(INFO, "======= SEND MSG SEGMENT START (%d bytes) =======", num);
-	for (int i = offset; i < offset + num; i++)
-		elog(INFO, "SENT byte #%d = %02x", i, (unsigned char) *(src + i));
-}
-// ----------------- DEBUG -----------------
 
 static void
-send_msg_by_bits(shm_mq_handle *mqh, Size nbytes, const void *data)
+send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 {
 	int bytes_left;
 	int bytes_send;
@@ -169,14 +160,11 @@ send_msg_by_bits(shm_mq_handle *mqh, Size nbytes, const void *data)
 	/* Send the expected message length */
 	shm_mq_send(mqh, sizeof(int), &nbytes, false);
 
-//	elog(INFO, "======= SEND MSG (%lu bytes) =======", nbytes);
 	for (int offset = 0; offset < nbytes; offset += bytes_send)
 	{
 		bytes_left = nbytes - offset;
-		bytes_send = (bytes_left < BUF_SIZE) ? bytes_left : BUF_SIZE;
+		bytes_send = (bytes_left < MSG_MAX_SIZE) ? bytes_left : MSG_MAX_SIZE;
 		shm_mq_send(mqh, bytes_send, &(((unsigned char*)data)[offset]), false);
-		// DEBUG: print message that we just sent
-//		print_sent_bytes(bytes_send, (char *) data, offset);
 	}
 }
 
@@ -238,7 +226,7 @@ SendQueryState(void)
 	{
 		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
 
-		send_msg_by_bits(mqh, msg.length, &msg);
+		send_msg_by_parts(mqh, msg.length, &msg);
 	}
 
 	/* check if backend doesn't execute any query */
@@ -246,7 +234,7 @@ SendQueryState(void)
 	{
 		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
 
-		send_msg_by_bits(mqh, msg.length, &msg);
+		send_msg_by_parts(mqh, msg.length, &msg);
 	}
 
 	/* happy path */
@@ -269,7 +257,7 @@ SendQueryState(void)
 
 		msg->stack_depth = list_length(qs_stack);
 		serialize_stack(msg->stack, qs_stack);
-		send_msg_by_bits(mqh, msglen, msg);
+		send_msg_by_parts(mqh, msglen, msg);
 	}
 	elog(DEBUG1, "Worker %d sends response for pg_query_state to %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	DetachPeer();
