@@ -960,6 +960,55 @@ copy_msg(shm_mq_msg *msg)
 	return result;
 }
 
+// ----------------- DEBUG -----------------
+static void
+print_recv_bytes(int num, char *src, int offset)
+{
+	elog(INFO, "======= RECV MSG SEGMENT START (%d bytes) =======", num);
+	for (int i = offset; i < offset + num; i++)
+		elog(INFO, "RECV byte #%d = %02x", i, (unsigned char) *(src + i));
+}
+// ----------------- DEBUG -----------------
+
+static shm_mq_result
+shm_mq_receive_by_bytes(shm_mq_handle *mqh, Size *total, void **datap)
+{
+	shm_mq_result mq_receive_result;
+	shm_mq_msg	*buff;
+	int			ii;
+	int			offset;
+	int		   *expected;
+	Size		len;
+
+	/* Get the expected number of bytes in message */
+	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &expected, false);
+	if (mq_receive_result != SHM_MQ_SUCCESS)
+		return mq_receive_result;
+	Assert(len == sizeof(int));
+//	elog(INFO, "======= RECV MSG (expecting %d bytes) =======", *expected);
+
+	*datap = palloc0(*expected);
+
+	/* Get the message itself */
+	for (offset = 0, ii = 0; offset < *expected; ii++)
+	{
+		// Keep receiving new messages until we assemble the full message
+		mq_receive_result = shm_mq_receive(mqh, &len, ((void **) &buff), false);
+		memcpy((char *) *datap + offset, buff, len);
+//		print_recv_bytes(len, (char *) *datap, offset);
+		offset += len;
+		if (mq_receive_result != SHM_MQ_SUCCESS)
+			return mq_receive_result;
+	}
+
+//	elog(INFO, "RECV: END cycle - %d", ii);
+	*total = offset;
+//	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
+//	*datap = buff;
+
+	return mq_receive_result;
+}
+
 static List *
 GetRemoteBackendQueryStates(PGPROC *leader,
 							List *pworkers,
@@ -1032,7 +1081,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	/* extract query state from leader process */
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	elog(DEBUG1, "Wait response from leader %d", leader->pid);
-	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &msg, false);
+	mq_receive_result = shm_mq_receive_by_bytes(mqh, &len, ((void **) &msg));
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		goto mq_error;
 	if (msg->reqid != reqid)

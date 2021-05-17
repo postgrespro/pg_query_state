@@ -18,6 +18,7 @@
 #include "storage/shm_mq.h"
 
 #define	QUEUE_SIZE			(16 * 1024)
+#define BUF_SIZE			7
 
 #define TIMINIG_OFF_WARNING 1
 #define BUFFERS_OFF_WARNING 2
