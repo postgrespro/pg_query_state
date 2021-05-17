@@ -258,4 +258,3 @@ index ba661d32a63..ee49febfce5 100644
 	List	   *grouping_stack; /* format-specific grouping state */
 --
 2.25.1
-
