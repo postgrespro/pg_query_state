@@ -8,7 +8,7 @@ EXTVERSION = 1.1
 DATA = pg_query_state--1.0--1.1.sql
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
-
+EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/test.conf
 EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
 	Dockerfile ./tests/*.pyc ./tmp_stress
 
@@ -37,7 +37,6 @@ installcheck: submake-isolation
 isolationcheck: | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_check) \
-	  --temp-config $(top_srcdir)/contrib/pg_query_state/test.conf \
       --outputdir=isolation_output \
 	$(ISOLATIONCHECKS)
 
