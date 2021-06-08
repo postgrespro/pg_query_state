@@ -31,13 +31,15 @@ ISOLATIONCHECKS = corner_cases
 check: isolationcheck
 
 installcheck: submake-isolation
+	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_installcheck) \
+	  --outputdir=isolation_output \
 	$(ISOLATIONCHECKS)
 
 isolationcheck: | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_check) \
-      --outputdir=isolation_output \
+	  --outputdir=isolation_output \
 	$(ISOLATIONCHECKS)
 
 submake-isolation:
