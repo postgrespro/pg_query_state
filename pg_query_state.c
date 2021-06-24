@@ -970,19 +970,21 @@ receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
 	shm_mq_result mq_receive_result;
 	shm_mq_msg	*buff;
 	int			offset;
-	int		   *expected;
+	int			*expected;
+	int			expected_data;
 	Size		len;
 
 	/* Get the expected number of bytes in message */
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &expected, nowait);
+	expected_data = *expected;
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		return mq_receive_result;
 	Assert(len == sizeof(int));
 
-	*datap = palloc0(*expected);
+	*datap = palloc0(expected_data);
 
 	/* Get the message itself */
-	for (offset = 0; offset < *expected; )
+	for (offset = 0; offset < expected_data; )
 	{
 		/* Keep receiving new messages until we assemble the full message */
 		mq_receive_result = shm_mq_receive(mqh, &len, ((void **) &buff), nowait);
