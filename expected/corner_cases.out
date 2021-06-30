@@ -1,3 +1,6 @@
+unused step name: s1_enable_pg_qs
+unused step name: s1_pg_qs_counterpart
+unused step name: s2_save_pid
 Parsed test spec with 2 sessions
 
 starting permutation: s1_pg_qs_1
@@ -10,55 +13,73 @@ ERROR:  attempt to extract state of current process
 
 starting permutation: s1_save_pid s2_pg_qs_counterpart
 step s1_save_pid: select save_own_pid(0);
-save_own_pid   
+save_own_pid
+------------
+            
+(1 row)
 
-               
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
-pg_query_state 
+pg_query_state
+--------------
+(0 rows)
 
 
 starting permutation: s1_save_pid s1_disable_pg_qs s2_pg_qs_counterpart
 step s1_save_pid: select save_own_pid(0);
-save_own_pid   
+save_own_pid
+------------
+            
+(1 row)
 
-               
 step s1_disable_pg_qs: set pg_query_state.enable to off;
-INFO:  query execution statistics disabled
+s2: INFO:  query execution statistics disabled
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
-pg_query_state 
+pg_query_state
+--------------
+(0 rows)
 
 
 starting permutation: s1_set_bob s2_set_bob s1_save_pid s2_pg_qs_counterpart
 step s1_set_bob: set role bob;
 step s2_set_bob: set role bob;
 step s1_save_pid: select save_own_pid(0);
-save_own_pid   
+save_own_pid
+------------
+            
+(1 row)
 
-               
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
-pg_query_state 
+pg_query_state
+--------------
+(0 rows)
 
 
 starting permutation: s1_set_bob s2_set_su s1_save_pid s2_pg_qs_counterpart
 step s1_set_bob: set role bob;
 step s2_set_su: set role super;
 step s1_save_pid: select save_own_pid(0);
-save_own_pid   
+save_own_pid
+------------
+            
+(1 row)
 
-               
-INFO:  state of backend is idle
+s2: INFO:  state of backend is idle
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
-pg_query_state 
+pg_query_state
+--------------
+(0 rows)
 
 
 starting permutation: s1_set_bob s2_set_alice s1_save_pid s2_pg_qs_counterpart
 step s1_set_bob: set role bob;
 step s2_set_alice: set role alice;
 step s1_save_pid: select save_own_pid(0);
-save_own_pid   
+save_own_pid
+------------
+            
+(1 row)
 
-               
 step s2_pg_qs_counterpart: select pg_query_state(counterpart_pid(0));
 ERROR:  permission denied
