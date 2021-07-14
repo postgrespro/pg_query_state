@@ -308,3 +308,117 @@ Do not hesitate to post your issues, questions and new ideas at the [issues](htt
 ## Authors
 [Maksim Milyutin](https://github.com/maksm90)  
 Alexey Kondratov <a.kondratov@postgrespro.ru> Postgres Professional Ltd., Russia
+
+## Function progress\_bar
+```plpgsql
+progress_bar(
+        integer     pid
+) returns FLOAT
+```
+extracts the current query state from backend with specified 'pid'. Then gets the numerical values of the actual rows and total rows and count progress for the whole query tree. Function returns numeric value from 0 to 1 describing the measure of query fulfillment. If there is no information about current state of the query, or the impossibility of counting, the corresponding messages will be displayed.
+
+## Function progress\_bar\_visual
+```plpgsql
+progress_bar(
+        integer     pid,
+        integer     delay
+) returns VOID
+```
+cyclically extracts and print the current query state in numeric value from backend with specified 'pid' every period specified by 'delay' in seconds. This is the looping version of the progress\_bar function that returns void value.
+
+**_Warning_**: Calling role have to be superuser or member of the role whose backend is being called. Otherwise function prints ERROR message `permission denied`.
+
+## Examples
+Assume first backend executes some function:
+```sql
+postgres=# insert into table_name select generate_series(1,10000000);
+```
+Other backend can get the follow output:
+```sql
+postgres=# SELECT pid FROM pg_stat_activity where query like 'insert%';
+  pid  
+-------
+ 23877
+(1 row)
+
+postgres=# SELECT progress_bar(23877);
+ progress_bar
+--------------
+    0.6087927
+(1 row)
+```
+Or continuous version:
+```sql
+postgres=# SELECT progress_bar_visual(23877, 1);
+Progress = 0.043510
+Progress = 0.085242
+Progress = 0.124921
+Progress = 0.168168
+Progress = 0.213803
+Progress = 0.250362
+Progress = 0.292632
+Progress = 0.331454
+Progress = 0.367509
+Progress = 0.407450
+Progress = 0.448646
+Progress = 0.488171
+Progress = 0.530559
+Progress = 0.565558
+Progress = 0.608039
+Progress = 0.645778
+Progress = 0.654842
+Progress = 0.699006
+Progress = 0.735760
+Progress = 0.787641
+Progress = 0.832160
+Progress = 0.871077
+Progress = 0.911858
+Progress = 0.956362
+Progress = 0.995097
+Progress = 1.000000
+ progress_bar_visual
+---------------------
+                   1
+(1 row)
+```
+Also uncountable queries exist. Assume first backend executes some function:
+```sql
+DELETE from table_name;
+```
+Other backend can get the follow output:
+```sql
+postgres=# SELECT pid FROM pg_stat_activity where query like 'delete%';
+  pid
+-------
+ 23877
+(1 row)
+
+postgres=# SELECT progress_bar(23877);
+INFO:  Counting Progress doesn't available
+ progress_bar
+--------------
+           -1
+(1 row)
+
+postgres=# SELECT progress_bar_visual(23877, 5);
+INFO:  Counting Progress doesn't available
+ progress_bar_visual
+---------------------
+                   -1
+(1 row)
+```
+
+## Reinstallation
+If you already have a module 'pg_query_state' without progress bar functions installed, execute this in the module's directory:
+```
+make install USE_PGXS=1
+```
+It is essential to restart the PostgreSQL instance. After that, execute the following queries in psql:
+```sql
+DROP EXTENSION IF EXISTS pg_query_state;
+CREATE EXTENSION pg_query_state;
+```
+
+## Authors
+Ekaterina Sokolova <e.sokolova@postgrespro.ru> Postgres Professional Ltd., Russia
+Vyacheslav Makarov <v.makarov@postgrespro.ru> Postgres Professional Ltd., Russia
