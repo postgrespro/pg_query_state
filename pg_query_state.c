@@ -952,6 +952,8 @@ signal_error:
 mq_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("error in message queue data transmitting")));
+
+	return NIL;
 }
 
 static shm_mq_msg *
@@ -1140,6 +1142,8 @@ mq_error:
 #endif
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("error in message queue data transmitting")));
+
+	return NIL;
 }
 
 void
