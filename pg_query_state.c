@@ -972,8 +972,8 @@ receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
 	shm_mq_result mq_receive_result;
 	shm_mq_msg	*buff;
 	int			offset;
-	int			*expected;
-	int			expected_data;
+	Size			*expected;
+	Size			expected_data;
 	Size		len;
 
 	/* Get the expected number of bytes in message */
@@ -981,7 +981,7 @@ receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
 	expected_data = *expected;
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		return mq_receive_result;
-	Assert(len == sizeof(int));
+	Assert(len == sizeof(Size));
 
 	*datap = palloc0(expected_data);
 
