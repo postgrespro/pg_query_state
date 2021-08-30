@@ -159,7 +159,7 @@ send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 	int offset;
 
 	/* Send the expected message length */
-	shm_mq_send(mqh, sizeof(int), &nbytes, false);
+	shm_mq_send(mqh, sizeof(Size), &nbytes, false);
 
 	for (offset = 0; offset < nbytes; offset += bytes_send)
 	{
