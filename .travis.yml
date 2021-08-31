@@ -2,8 +2,13 @@ sudo: required
 
 language: c
 
+os: linux
+
+dist: focal
+
 services:
     - docker
+
 
 install:
     - ./mk_dockerfile.sh
