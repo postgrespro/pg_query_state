@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/postgrespro/pg_query_state.svg?branch=master)](https://travis-ci.org/postgrespro/pg_query_state)
+[![Build Status](https://travis-ci.com/postgrespro/pg_query_state.svg?branch=master)](https://travis-ci.com/postgrespro/pg_query_state)
 [![codecov](https://codecov.io/gh/postgrespro/pg_query_state/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_query_state)
 
 # pg\_query\_state
