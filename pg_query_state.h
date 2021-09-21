@@ -31,6 +31,11 @@
 #define MAX_RCV_TIMEOUT   6000 /* 6 seconds */
 #define MAX_SND_TIMEOUT   3000 /* 3 seconds */
 
+/*
+ * Delay for receiving parts of full message (in case SHM_MQ_WOULD_BLOCK code),
+ * should be tess than MAX_RCV_TIMEOUT
+ */
+#define PART_RCV_DELAY    1000 /* 1 second */
 
 /*
  * Result status on query state request from asked backend

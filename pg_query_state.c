@@ -61,7 +61,7 @@ static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
 static void qs_ExecutorFinish(QueryDesc *queryDesc);
 
 static shm_mq_result receive_msg_by_parts(shm_mq_handle *mqh, Size *total,
-											 void **datap, bool nowait);
+											 void **datap, int64 timeout, int *rc, bool nowait);
 
 /* Global variables */
 List 					*QueryDescStack = NIL;
@@ -780,7 +780,7 @@ shm_mq_receive_with_timeout(shm_mq_handle *mqh,
 	{
 		shm_mq_result mq_receive_result;
 
-		mq_receive_result = receive_msg_by_parts(mqh, nbytesp, datap, true);
+		mq_receive_result = receive_msg_by_parts(mqh, nbytesp, datap, timeout, &rc, true);
 		if (mq_receive_result != SHM_MQ_WOULD_BLOCK)
 			return mq_receive_result;
 		if (rc & WL_TIMEOUT || delay <= 0)
@@ -967,33 +967,61 @@ copy_msg(shm_mq_msg *msg)
 
 static shm_mq_result
 receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
-						bool nowait)
+						int64 timeout, int *rc, bool nowait)
 {
 	shm_mq_result mq_receive_result;
 	shm_mq_msg	*buff;
 	int			offset;
-	Size			*expected;
-	Size			expected_data;
+	Size		*expected;
+	Size		expected_data;
 	Size		len;
 
 	/* Get the expected number of bytes in message */
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &expected, nowait);
-	expected_data = *expected;
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		return mq_receive_result;
 	Assert(len == sizeof(Size));
 
+	expected_data = *expected;
 	*datap = palloc0(expected_data);
 
 	/* Get the message itself */
 	for (offset = 0; offset < expected_data; )
 	{
+		int64 delay = timeout;
 		/* Keep receiving new messages until we assemble the full message */
-		mq_receive_result = shm_mq_receive(mqh, &len, ((void **) &buff), nowait);
+		for (;;)
+		{
+			mq_receive_result = shm_mq_receive(mqh, &len, ((void **) &buff), nowait);
+			if (mq_receive_result != SHM_MQ_SUCCESS)
+			{
+				if (nowait && mq_receive_result == SHM_MQ_WOULD_BLOCK)
+				{
+					/*
+					 * We can't leave this function during reading parts with
+					 * error code SHM_MQ_WOULD_BLOCK because can be be error
+					 * at next call receive_msg_by_parts() with continuing
+					 * reading non-readed parts.
+					 * So we should wait whole MAX_RCV_TIMEOUT timeout and
+					 * return error after that only.
+					*/
+					if (delay > 0)
+					{
+						pg_usleep(PART_RCV_DELAY * 1000);
+						delay -= PART_RCV_DELAY;
+						continue;
+					}
+					if (rc)
+					{	/* Mark that the timeout has expired: */
+						*rc |= WL_TIMEOUT;
+					}
+				}
+				return mq_receive_result;
+			}
+			break;
+		}
 		memcpy((char *) *datap + offset, buff, len);
 		offset += len;
-		if (mq_receive_result != SHM_MQ_SUCCESS)
-			return mq_receive_result;
 	}
 
 	*total = offset;
@@ -1074,7 +1102,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	elog(DEBUG1, "Wait response from leader %d", leader->pid);
 	mq_receive_result = receive_msg_by_parts(mqh, &len, (void **) &msg,
-												false);
+												0, NULL, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		goto mq_error;
 	if (msg->reqid != reqid)
