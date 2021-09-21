@@ -43,6 +43,21 @@ def n_close(conns):
 	for conn in conns:
 		conn.close()
 
+def pg_query_state_locks(config, pid, conn, verbose=False, costs=False, timing=False, \
+								buffers=False, triggers=False, format='text'):
+	"""
+	Get query state from backend with specified pid and optional parameters.
+	Save any warning, info, notice and log data in global variable 'notices'
+	"""
+
+	curs = conn.cursor()
+	curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
+	wait(conn)
+	result = curs.fetchall()
+	notices = conn.notices[:]
+
+	return result, notices
+
 def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 								buffers=False, triggers=False, format='text'):
 	"""
@@ -52,12 +67,61 @@ def pg_query_state(config, pid, verbose=False, costs=False, timing=False, \
 
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
-
 	curs.callproc('pg_query_state', (pid, verbose, costs, timing, buffers, triggers, format))
 	result = curs.fetchall()
 	notices = conn.notices[:]
 	conn.close()
 
+	return result, notices
+
+def onetime_query_state_locks(config, acon_query, acon_pg, query, args={}, num_workers=0):
+	"""
+	Get intermediate state of 'query' on connection 'acon_query' after number of 'steps'
+	of node executions from start of query
+	"""
+
+	curs_query = acon_query.cursor()
+	curs_pg = acon_pg.cursor()
+	curs_query.execute("select pg_advisory_lock(1);")
+	curs_pg.execute("select pg_advisory_lock(2);")
+	wait(acon_query)
+	wait(acon_pg)
+	curs_pg.execute("select pg_advisory_lock(1);")
+	set_guc(acon_query, 'enable_mergejoin', 'off')
+	set_guc(acon_query, 'max_parallel_workers_per_gather', num_workers)
+	curs_query.execute(query)
+	# extract current state of query progress
+	MAX_PG_QS_RETRIES = 10
+	DELAY_BETWEEN_RETRIES = 0.1
+	pg_qs_args = {
+			'config': config,
+			'pid': acon_query.get_backend_pid(),
+			'conn': acon_pg
+			}
+	for k, v in args.items():
+		pg_qs_args[k] = v
+	n_retries = 0
+
+	wait(acon_pg)
+
+	while True:
+		result, notices = pg_query_state_locks(**pg_qs_args)
+		n_retries += 1
+		if len(result) > 0:
+			break
+		if n_retries >= MAX_PG_QS_RETRIES:
+			# pg_query_state callings don't return any result, more likely run
+			# query has completed
+			break
+		time.sleep(DELAY_BETWEEN_RETRIES)
+
+	curs_pg.execute("select pg_advisory_unlock(2);")
+	wait(acon_pg)
+	wait(acon_query)
+
+	set_guc(acon_query, 'enable_mergejoin', 'on')
+	curs_query.execute("select pg_advisory_unlock(2);")
+	curs_pg.execute("select pg_advisory_unlock(1);")
 	return result, notices
 
 def onetime_query_state(config, async_conn, query, args={}, num_workers=0):

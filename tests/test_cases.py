@@ -1,6 +1,6 @@
 '''
 test_cases.py
-Copyright (c) 2016-2020, Postgres Professional
+Copyright (c) 2016-2021, Postgres Professional
 '''
 
 import json
@@ -42,21 +42,28 @@ def test_deadlock(config):
 def test_simple_query(config):
 	"""test statistics of simple query"""
 
-	acon, = common.n_async_connect(config)
-	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
+	acon1, acon2 = common.n_async_connect(config, 2)
+	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1'
 	expected = r"""Aggregate \(Current loop: actual rows=\d+, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=62473, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
+        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
         ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
         ->  Hash \(Current loop: actual rows=\d+, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs, _ = common.onetime_query_state(config, acon, query)
-	assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
-		and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
+	qs, _ = common.onetime_query_state_locks(config, acon1, acon2, query)
 
-	common.n_close((acon,))
+	assert qs[0][0] == acon1.get_backend_pid()
+	assert qs[0][1] == 0
+	assert qs[0][2] == query
+	assert re.match(expected, qs[0][3])
+	assert qs[0][4] == None
+	# assert qs[0][0] == acon.get_backend_pid() and qs[0][1] == 0 \
+	# 	and qs[0][2] == query and re.match(expected, qs[0][3]) and qs[0][4] == None
+
+	common.n_close((acon1, acon2))
 
 def test_concurrent_access(config):
 	"""test when two backends compete with each other to extract state from third running backend"""
@@ -87,50 +94,56 @@ def test_concurrent_access(config):
 def test_nested_call(config):
 	"""test statistics under calling function"""
 
-	acon, = common.n_async_connect(config)
+	acon1, acon2 = common.n_async_connect(config, 2)
 	util_conn = psycopg2.connect(**config)
 	util_curs = util_conn.cursor()
 	create_function = """
 		create or replace function n_join_foo_bar() returns integer as $$
 			begin
-				return (select count(*) from foo join bar on foo.c1=bar.c1);
+				return (select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1);
 			end;
 		$$ language plpgsql"""
 	drop_function = 'drop function n_join_foo_bar()'
 	call_function = 'select * from n_join_foo_bar()'
-	nested_query = 'SELECT (select count(*) from foo join bar on foo.c1=bar.c1)'
+	nested_query1 = '(select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1)'
+	nested_query2 = 'SELECT (select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1)'
 	expected = 'Function Scan on n_join_foo_bar (Current loop: actual rows=0, loop number=1)'
 	expected_nested = r"""Result \(Current loop: actual rows=0, loop number=1\)
   InitPlan 1 \(returns \$0\)
     ->  Aggregate \(Current loop: actual rows=0, loop number=1\)
-          ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+          ->  Hash Join \(Current loop: actual rows=62473, loop number=1\)
                 Hash Cond: \(foo.c1 = bar.c1\)
-                ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
-                ->  Hash \(Current loop: actual rows=0, loop number=1\)
+                Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
+                ->  Seq Scan on foo \(Current loop: actual rows=1000000, loop number=1\)
+                ->  Hash \(Current loop: actual rows=500000, loop number=1\)
                       Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
                       ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
+
 
 	util_curs.execute(create_function)
 	util_conn.commit()
 
-	qs, notices = common.onetime_query_state(config, acon, call_function)
+	qs, notices = common.onetime_query_state_locks(config, acon1, acon2, call_function)
 
 	# Print some debug output before assertion
 	if len(qs) < 2:
 		print(qs)
 
-	assert len(qs) == 2 \
-		and qs[0][0] == qs[1][0] == acon.get_backend_pid() \
-		and qs[0][1] == 0 and qs[1][1] == 1 \
-		and qs[0][2] == call_function and qs[0][3] == expected \
-		and qs[1][2] == nested_query and re.match(expected_nested, qs[1][3]) \
-		and qs[0][4] == qs[1][4] == None
+	assert len(qs) == 3
+	assert qs[0][0] == qs[1][0] == acon1.get_backend_pid()
+	assert qs[0][1] == 0
+	assert qs[1][1] == 1
+	assert qs[0][2] == call_function
+	assert qs[0][3] == expected
+	assert qs[1][2] == nested_query1 or qs[1][2] == nested_query2
+	assert re.match(expected_nested, qs[1][3])
+	assert qs[0][4] == qs[1][4] == None
 	assert len(notices) == 0
 
 	util_curs.execute(drop_function)
 
 	util_conn.close()
-	common.n_close((acon,))
+	common.n_close((acon1, acon2))
 
 def test_insert_on_conflict(config):
 	"""test statistics on conflicting tuples under INSERT ON CONFLICT query"""
@@ -212,65 +225,77 @@ def test_trigger(config):
 def test_costs(config):
 	"""test plan costs"""
 
-	acon, = common.n_async_connect(config)
-	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
+	acon1, acon2 = common.n_async_connect(config, 2)
+	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1;'
+
 	expected = r"""Aggregate  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=8\) \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=0, loop number=1\)
+  ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1, loop number=1\)
-        ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=0, loop number=1\)
+        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
+        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1000000, loop number=1\)
+        ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
 
-	qs, notices = common.onetime_query_state(config, acon, query, {'costs': True})
-	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	qs, notices = common.onetime_query_state_locks(config, acon1, acon2, query, {'costs': True})
+
+	assert len(qs) == 2 and re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
-	common.n_close((acon,))
+	common.n_close((acon1, acon2))
 
 def test_buffers(config):
 	"""test buffer statistics"""
 
-	acon, = common.n_async_connect(config)
-	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
+	acon1, acon2 = common.n_async_connect(config, 2)
+	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1'
 	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=0, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual rows=1, loop number=1\)
+        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
+        Buffers: shared hit=\d+, temp read=\d+ written=\d+
+        ->  Seq Scan on foo \(Current loop: actual rows=1000000, loop number=1\)
               Buffers: [^\n]*
-        ->  Hash \(Current loop: actual rows=0, loop number=1\)
+        ->  Hash \(Current loop: actual rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+              Buffers: shared hit=\d+, temp written=\d+
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)
                     Buffers: .*"""
 
-	common.set_guc(acon, 'pg_query_state.enable_buffers', 'on')
+	common.set_guc(acon1, 'pg_query_state.enable_buffers', 'on')
 
-	qs, notices = common.onetime_query_state(config, acon, query, {'buffers': True})
-	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	qs, notices = common.onetime_query_state_locks(config, acon1, acon2, query, {'buffers': True})
+
+	assert len(qs) == 2
+	assert re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
-	common.n_close((acon,))
+	common.n_close((acon1, acon2))
 
 def test_timing(config):
 	"""test timing statistics"""
 
-	acon, = common.n_async_connect(config)
-	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
+	acon1, acon2 = common.n_async_connect(config, 2)
+	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1'
+
 	expected = r"""Aggregate \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
-  ->  Hash Join \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
+  ->  Hash Join \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=1, loop number=1\)
-        ->  Hash \(Current loop: running time=\d+.\d+ actual rows=0, loop number=1\)
+        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
+        ->  Seq Scan on foo \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=1000000, loop number=1\)
+        ->  Hash \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)"""
 
-	common.set_guc(acon, 'pg_query_state.enable_timing', 'on')
+	common.set_guc(acon1, 'pg_query_state.enable_timing', 'on')
 
-	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True})
-	assert len(qs) == 1 and re.match(expected, qs[0][3])
+	qs, notices = common.onetime_query_state_locks(config, acon1, acon2, query, {'timing': True})
+
+	assert len(qs) == 2
+	assert re.match(expected, qs[0][3])
 	assert len(notices) == 0
 
-	common.n_close((acon,))
+	common.n_close((acon1, acon2))
 
 def check_plan(plan):
 	assert 'Current loop' in plan

@@ -1,6 +1,6 @@
 '''
 pg_qs_test_runner.py
-Copyright (c) 2016-2020, Postgres Professional
+Copyright (c) 2016-2021, Postgres Professional
 '''
 
 import argparse
@@ -22,6 +22,20 @@ class PasswordPromptAction(argparse.Action):
 class SetupException(Exception): pass
 class TeardownException(Exception): pass
 
+unlock_if_eq_1 = """
+	CREATE OR REPLACE FUNCTION unlock_if_eq_1(x integer) RETURNS integer AS $$
+		BEGIN
+			IF x = 1 THEN
+				perform pg_advisory_unlock(1);
+				perform pg_advisory_lock(2);
+				return 1;
+			ELSE
+				return x;
+			END IF;
+		END;
+	$$ LANGUAGE plpgsql
+	"""
+
 setup_cmd = [
 	'drop extension if exists pg_query_state cascade',
 	'drop table if exists foo cascade',
@@ -33,6 +47,7 @@ setup_cmd = [
 	'insert into bar select i, i%2=1 from generate_series(1, 500000) as i',
 	'analyze foo',
 	'analyze bar',
+	unlock_if_eq_1,
 ]
 
 teardown_cmd = [
