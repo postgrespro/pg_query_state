@@ -1141,7 +1141,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 														MAX_RCV_TIMEOUT);
 		if (mq_receive_result != SHM_MQ_SUCCESS)
 		{
-			/* counterpart is died, not consider it */
+			/* counterpart is dead, not considering it */
 			goto mq_error;
 		}
 		if (msg->reqid != reqid)

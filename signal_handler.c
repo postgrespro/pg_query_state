@@ -27,7 +27,16 @@ typedef struct
 	char		*plan;
 } stack_frame;
 
-static void send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data);
+/*
+ * An self-explanarory enum describing the send_msg_by_parts results
+ */
+typedef enum
+{
+	MSG_BY_PARTS_SUCCEEDED,
+	MSG_BY_PARTS_FAILED
+} msg_by_parts_result;
+
+static msg_by_parts_result send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data);
 
 /*
  *	Get List of stack_frames as a stack of function calls starting from outermost call.
@@ -151,7 +160,36 @@ serialize_stack(char *dest, List *qs_stack)
 	}
 }
 
-static void
+static msg_by_parts_result
+shm_mq_send_nonblocking(shm_mq_handle *mqh, Size nbytes, const void *data, Size attempts)
+{
+	int		i;
+	shm_mq_result	res;
+
+	for(i = 0; i < attempts; i++)
+	{
+		res = shm_mq_send(mqh, nbytes, data, true);
+
+		if(res == SHM_MQ_SUCCESS)
+			break;
+		else if (res == SHM_MQ_DETACHED)
+			return MSG_BY_PARTS_FAILED;
+
+		/* SHM_MQ_WOULD_BLOCK - sleeping for some delay */
+		pg_usleep(WRITING_DELAY);
+	}
+
+	if(i == attempts)
+		return MSG_BY_PARTS_FAILED;
+
+	return MSG_BY_PARTS_SUCCEEDED;
+}
+
+/*
+ * send_msg_by_parts sends data throurh the queue as a bunch of messages
+ * of smaller size
+ */
+static msg_by_parts_result
 send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 {
 	int bytes_left;
@@ -159,14 +197,20 @@ send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 	int offset;
 
 	/* Send the expected message length */
-	shm_mq_send(mqh, sizeof(Size), &nbytes, false);
+	if(shm_mq_send_nonblocking(mqh, sizeof(Size), &nbytes, NUM_OF_ATTEMPTS) == MSG_BY_PARTS_FAILED)
+		return MSG_BY_PARTS_FAILED;
 
+	/* Send the message itself */
 	for (offset = 0; offset < nbytes; offset += bytes_send)
 	{
 		bytes_left = nbytes - offset;
 		bytes_send = (bytes_left < MSG_MAX_SIZE) ? bytes_left : MSG_MAX_SIZE;
-		shm_mq_send(mqh, bytes_send, &(((unsigned char*)data)[offset]), false);
+		if(shm_mq_send_nonblocking(mqh, bytes_send, &(((unsigned char*)data)[offset]), NUM_OF_ATTEMPTS)
+			== MSG_BY_PARTS_FAILED)
+			return MSG_BY_PARTS_FAILED;
 	}
+
+	return MSG_BY_PARTS_SUCCEEDED;
 }
 
 /*
@@ -227,7 +271,8 @@ SendQueryState(void)
 	{
 		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
 
-		send_msg_by_parts(mqh, msg.length, &msg);
+		if(send_msg_by_parts(mqh, msg.length, &msg) != MSG_BY_PARTS_SUCCEEDED)
+			goto connection_cleanup;
 	}
 
 	/* check if backend doesn't execute any query */
@@ -235,7 +280,8 @@ SendQueryState(void)
 	{
 		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
 
-		send_msg_by_parts(mqh, msg.length, &msg);
+		if(send_msg_by_parts(mqh, msg.length, &msg) != MSG_BY_PARTS_SUCCEEDED)
+			goto connection_cleanup;
 	}
 
 	/* happy path */
@@ -258,9 +304,25 @@ SendQueryState(void)
 
 		msg->stack_depth = list_length(qs_stack);
 		serialize_stack(msg->stack, qs_stack);
-		send_msg_by_parts(mqh, msglen, msg);
+
+		if(send_msg_by_parts(mqh, msglen, msg) != MSG_BY_PARTS_SUCCEEDED)
+		{
+			elog(WARNING, "pg_query_state: peer seems to have detached");
+			goto connection_cleanup;
+		}
 	}
 	elog(DEBUG1, "Worker %d sends response for pg_query_state to %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
+	DetachPeer();
+	UnlockShmem(&tag);
+
+	return;
+
+connection_cleanup:
+#if PG_VERSION_NUM < 100000
+	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 	DetachPeer();
 	UnlockShmem(&tag);
 }
