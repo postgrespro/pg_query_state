@@ -19,7 +19,7 @@
 
 #define	QUEUE_SIZE			(16 * 1024)
 #define MSG_MAX_SIZE		1024
-#define WRITING_DELAY		(100 * 1000) // 100ms
+#define WRITING_DELAY		(100 * 1000) /* 100ms */
 #define NUM_OF_ATTEMPTS		6
 
 #define TIMINIG_OFF_WARNING 1

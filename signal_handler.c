@@ -163,7 +163,7 @@ serialize_stack(char *dest, List *qs_stack)
 static msg_by_parts_result
 shm_mq_send_nonblocking(shm_mq_handle *mqh, Size nbytes, const void *data, Size attempts)
 {
-	int		i;
+	int				i;
 	shm_mq_result	res;
 
 	for(i = 0; i < attempts; i++)
@@ -186,7 +186,7 @@ shm_mq_send_nonblocking(shm_mq_handle *mqh, Size nbytes, const void *data, Size 
 }
 
 /*
- * send_msg_by_parts sends data throurh the queue as a bunch of messages
+ * send_msg_by_parts sends data through the queue as a bunch of messages
  * of smaller size
  */
 static msg_by_parts_result
