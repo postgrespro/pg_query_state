@@ -541,14 +541,18 @@ pg_query_state(PG_FUNCTION_ARGS)
 				break;
 			}
 		}
-		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
-		params->reqid = ++reqid;
-		pg_write_barrier();
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
 		if (!(superuser() || GetUserId() == counterpart_user_id))
+		{
+			UnlockShmem(&tag);
 			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 							errmsg("permission denied")));
+		}
+
+		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
+		params->reqid = ++reqid;
+		pg_write_barrier();
 
 		bg_worker_procs = GetRemoteBackendWorkers(proc);
 
