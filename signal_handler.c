@@ -168,7 +168,11 @@ shm_mq_send_nonblocking(shm_mq_handle *mqh, Size nbytes, const void *data, Size 
 
 	for(i = 0; i < attempts; i++)
 	{
+#if PG_VERSION_NUM <= 140000
 		res = shm_mq_send(mqh, nbytes, data, true);
+#else
+		res = shm_mq_send(mqh, nbytes, data, true, true);
+#endif
 
 		if(res == SHM_MQ_SUCCESS)
 			break;
