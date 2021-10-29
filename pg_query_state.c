@@ -891,7 +891,11 @@ SendBgWorkerPids(void)
 		msg->pids[i++] = current_pid;
 	}
 
+#if PG_VERSION_NUM <= 140000
 	shm_mq_send(mqh, msg_len, msg, false);
+#else
+	shm_mq_send(mqh, msg_len, msg, false, true);
+#endif
 	UnlockShmem(&tag);
 }
 
