@@ -10,5 +10,10 @@ cscope.out
 tags
 Dockerfile
 tmp_stress
-isolation_output
+
+# Generated subdirectories
+/log/
+/results/
+/tmp_check/
+/isolation_output
 
