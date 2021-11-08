@@ -107,6 +107,14 @@ index defb75a..4245d28 100644
 +{
 +	int i;
 +
++	/*
++	 * This is invoked from ProcessInterrupts(), and since some of the
++	 * functions it calls contain CHECK_FOR_INTERRUPTS(), there is a potential
++	 * for recursive calls if more signals are received while this runs, so
++	 * let's block interrupts until done.
++	 */
++	HOLD_INTERRUPTS();
++
 +	/* Check on expiring of custom signals and call its handlers if exist */
 +	for (i = 0; i < NUM_CUSTOM_PROCSIGNALS; i++)
 +	{
@@ -124,6 +132,8 @@ index defb75a..4245d28 100644
 +			}
 +		}
 +	}
++
++	RESUME_INTERRUPTS();
 +}
 \ No newline at end of file
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
