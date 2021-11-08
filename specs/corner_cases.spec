@@ -64,12 +64,12 @@ permutation "s1_pg_qs_1"
 permutation "s1_pg_qs_2"
 
 # Check idle
-permutation "s1_save_pid" "s2_pg_qs_counterpart"
+permutation "s1_save_pid" "s2_pg_qs_counterpart"(*)
 
 # Check module disable
-permutation "s1_save_pid" "s1_disable_pg_qs" "s2_pg_qs_counterpart"
+permutation "s1_save_pid" "s1_disable_pg_qs" "s2_pg_qs_counterpart"(*)
 
 # Check roles correspondence
-permutation "s1_set_bob" "s2_set_bob" "s1_save_pid" "s2_pg_qs_counterpart"
-permutation "s1_set_bob" "s2_set_su" "s1_save_pid" "s2_pg_qs_counterpart"
-permutation "s1_set_bob" "s2_set_alice" "s1_save_pid" "s2_pg_qs_counterpart"
+permutation "s1_set_bob" "s2_set_bob" "s1_save_pid" "s2_pg_qs_counterpart"(*)
+permutation "s1_set_bob" "s2_set_su" "s1_save_pid" "s2_pg_qs_counterpart"(*)
+permutation "s1_set_bob" "s2_set_alice" "s1_save_pid" "s2_pg_qs_counterpart"(*)
