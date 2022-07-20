@@ -48,7 +48,6 @@ static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 void		_PG_init(void);
-void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
@@ -179,6 +178,11 @@ pg_qs_shmem_startup(void)
 	module_initialized = true;
 }
 
+#if PG_VERSION_NUM >= 150000
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static void pg_qs_shmem_request(void);
+#endif
+
 /*
  * Module load callback
  */
@@ -188,12 +192,12 @@ _PG_init(void)
 	if (!process_shared_preload_libraries_in_progress)
 		return;
 
-	/*
-	 * Request additional shared resources.  (These are no-ops if we're not in
-	 * the postmaster process.)  We'll allocate or attach to the shared
-	 * resources in qs_shmem_startup().
-	 */
+#if PG_VERSION_NUM >= 150000
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = pg_qs_shmem_request;
+#else
 	RequestAddinShmemSpace(pg_qs_shmem_size());
+#endif
 
 	/* Register interrupt on custom signal of polling query state */
 	UserIdPollReason = RegisterCustomProcSignalHandler(SendCurrentUserId);
@@ -252,22 +256,13 @@ _PG_init(void)
 	shmem_startup_hook = pg_qs_shmem_startup;
 }
 
-/*
- * Module unload callback
- */
-void
-_PG_fini(void)
+static void
+pg_qs_shmem_request(void)
 {
-	module_initialized = false;
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
 
-	/* clear global state */
-	list_free(QueryDescStack);
-
-	/* Uninstall hooks. */
-	ExecutorStart_hook = prev_ExecutorStart;
-	ExecutorRun_hook = prev_ExecutorRun;
-	ExecutorFinish_hook = prev_ExecutorFinish;
-	shmem_startup_hook = prev_shmem_startup_hook;
+	RequestAddinShmemSpace(pg_qs_shmem_size());
 }
 
 /*
