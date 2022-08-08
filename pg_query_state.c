@@ -256,6 +256,7 @@ _PG_init(void)
 	shmem_startup_hook = pg_qs_shmem_startup;
 }
 
+#if PG_VERSION_NUM >= 150000
 static void
 pg_qs_shmem_request(void)
 {
@@ -264,6 +265,7 @@ pg_qs_shmem_request(void)
 
 	RequestAddinShmemSpace(pg_qs_shmem_size());
 }
+#endif
 
 /*
  * ExecutorStart hook:
