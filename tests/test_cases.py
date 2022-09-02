@@ -386,3 +386,18 @@ def test_timing_buffers_conflicts(config):
 							 and 'WARNING:  buffers statistics disabled\n' in notices
 
 	common.n_close((acon,))
+
+def test_progress_bar(config):
+	"""test progress_bar of simple query"""
+
+	acon, = common.n_async_connect(config)
+	query = 'select * from foo join bar on foo.c1=bar.c1'
+
+	qs, notices = common.onetime_progress_bar(config, acon, query)
+	assert qs[0][0] >= 0 and qs[0][0] < 1
+	first_qs = qs[0][0]
+
+	qs, _ = common.onetime_progress_bar(config, acon, query)
+	assert qs[0][0] >= first_qs and qs[0][0] < 1
+
+	common.n_close((acon,))
