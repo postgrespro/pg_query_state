@@ -864,6 +864,7 @@ SendBgWorkerPids(void)
 	int				 i;
 	shm_mq_handle 	*mqh;
 	LOCKTAG		     tag;
+	shm_mq_result	result;
 
 	LockShmem(&tag, PG_QS_SND_KEY);
 
@@ -893,10 +894,15 @@ SendBgWorkerPids(void)
 	}
 
 #if PG_VERSION_NUM < 150000
-	shm_mq_send(mqh, msg_len, msg, false);
+	result = shm_mq_send(mqh, msg_len, msg, false);
 #else
-	shm_mq_send(mqh, msg_len, msg, false, true);
+	result = shm_mq_send(mqh, msg_len, msg, false, true);
 #endif
+
+	/* Check for failure. */
+	if(result == SHM_MQ_DETACHED)
+		elog(WARNING, "could not send message queue to shared-memory queue: receiver has been detached");
+
 	UnlockShmem(&tag);
 }
 
