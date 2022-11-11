@@ -224,12 +224,12 @@ send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 void
 SendQueryState(void)
 {
-	shm_mq_handle 	*mqh;
-	instr_time	start_time;
-	instr_time	cur_time;
-	int64 		delay = MAX_SND_TIMEOUT;
-	int         reqid = params->reqid;
-	LOCKTAG		tag;
+	shm_mq_handle  *mqh;
+	instr_time		start_time;
+	instr_time		cur_time;
+	int64 			delay = MAX_SND_TIMEOUT;
+	int         	reqid = params->reqid;
+	LOCKTAG			tag;
 
 	INSTR_TIME_SET_CURRENT(start_time);
 
