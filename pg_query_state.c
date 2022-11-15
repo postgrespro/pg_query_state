@@ -101,10 +101,10 @@ static List *GetRemoteBackendQueryStates(PGPROC *leader,
 										 ExplainFormat format);
 
 /* Shared memory variables */
-shm_toc			*toc = NULL;
+shm_toc			   *toc = NULL;
 RemoteUserIdResult *counterpart_userid = NULL;
-pg_qs_params   	*params = NULL;
-shm_mq 			*mq = NULL;
+pg_qs_params   	   *params = NULL;
+shm_mq 			   *mq = NULL;
 
 /*
  * Estimate amount of shared memory needed.
@@ -208,7 +208,7 @@ _PG_init(void)
 		|| UserIdPollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
+						  errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
 		return;
 	}
 
@@ -435,7 +435,7 @@ deserialize_stack(char *src, int stack_depth)
 {
 	List 	*result = NIL;
 	char	*curr_ptr = src;
-	int		i;
+	int		 i;
 
 	for (i = 0; i < stack_depth; i++)
 	{
@@ -599,10 +599,10 @@ pg_query_state(PG_FUNCTION_ARGS)
 					/* print warnings if exist */
 					if (msg->warnings & TIMINIG_OFF_WARNING)
 						ereport(WARNING, (errcode(ERRCODE_WARNING),
-										errmsg("timing statistics disabled")));
+										  errmsg("timing statistics disabled")));
 					if (msg->warnings & BUFFERS_OFF_WARNING)
 						ereport(WARNING, (errcode(ERRCODE_WARNING),
-										errmsg("buffers statistics disabled")));
+										  errmsg("buffers statistics disabled")));
 
 					oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
@@ -864,6 +864,7 @@ SendBgWorkerPids(void)
 	int				 i;
 	shm_mq_handle 	*mqh;
 	LOCKTAG		     tag;
+	shm_mq_result	 result;
 
 	LockShmem(&tag, PG_QS_SND_KEY);
 
@@ -893,10 +894,15 @@ SendBgWorkerPids(void)
 	}
 
 #if PG_VERSION_NUM < 150000
-	shm_mq_send(mqh, msg_len, msg, false);
+	result = shm_mq_send(mqh, msg_len, msg, false);
 #else
-	shm_mq_send(mqh, msg_len, msg, false, true);
+	result = shm_mq_send(mqh, msg_len, msg, false, true);
 #endif
+
+	/* Check for failure. */
+	if(result == SHM_MQ_DETACHED)
+		elog(WARNING, "could not send message queue to shared-memory queue: receiver has been detached");
+
 	UnlockShmem(&tag);
 }
 
@@ -953,10 +959,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("invalid send signal")));
+					errmsg("invalid send signal")));
 mq_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("error in message queue data transmitting")));
+					errmsg("error in message queue data transmitting")));
 
 	return NIL;
 }
@@ -974,12 +980,12 @@ static shm_mq_result
 receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
 						int64 timeout, int *rc, bool nowait)
 {
-	shm_mq_result mq_receive_result;
-	shm_mq_msg	*buff;
-	int			offset;
-	Size		*expected;
-	Size		expected_data;
-	Size		len;
+	shm_mq_result	mq_receive_result;
+	shm_mq_msg	   *buff;
+	int				offset;
+	Size		   *expected;
+	Size			expected_data;
+	Size			len;
 
 	/* Get the expected number of bytes in message */
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &expected, nowait);
@@ -1107,7 +1113,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	elog(DEBUG1, "Wait response from leader %d", leader->pid);
 	mq_receive_result = receive_msg_by_parts(mqh, &len, (void **) &msg,
-												0, NULL, false);
+											 0, NULL, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		goto mq_error;
 	if (msg->reqid != reqid)
@@ -1126,7 +1132,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	 */
 	foreach(iter, alive_procs)
 	{
-		PGPROC 			*proc = (PGPROC *) lfirst(iter);
+		PGPROC 	*proc = (PGPROC *) lfirst(iter);
 
 		/* prepare message queue to transfer data */
 		elog(DEBUG1, "Wait response from worker %d", proc->pid);
@@ -1166,7 +1172,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("invalid send signal")));
+					errmsg("invalid send signal")));
 mq_error:
 #if PG_VERSION_NUM < 100000
 	shm_mq_detach(mq);
@@ -1174,7 +1180,7 @@ mq_error:
 	shm_mq_detach(mqh);
 #endif
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("error in message queue data transmitting")));
+					errmsg("error in message queue data transmitting")));
 
 	return NIL;
 }
