@@ -612,17 +612,18 @@ pg_query_state(PG_FUNCTION_ARGS)
 					foreach(i, msgs)
 					{
 						List 		*qs_stack;
-						shm_mq_msg	*msg = (shm_mq_msg *) lfirst(i);
+						shm_mq_msg	*current_msg = (shm_mq_msg *) lfirst(i);
 						proc_state	*p_state = (proc_state *) palloc(sizeof(proc_state));
 
-						if (msg->result_code != QS_RETURNED)
+						if (current_msg->result_code != QS_RETURNED)
 							continue;
 
-						AssertState(msg->result_code == QS_RETURNED);
+						AssertState(current_msg->result_code == QS_RETURNED);
 
-						qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
+						qs_stack = deserialize_stack(current_msg->stack,
+													 current_msg->stack_depth);
 
-						p_state->proc = msg->proc;
+						p_state->proc = current_msg->proc;
 						p_state->stack = qs_stack;
 						p_state->frame_index = 0;
 						p_state->frame_cursor = list_head(qs_stack);
@@ -943,10 +944,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 	for (i = 0; i < msg->number; i++)
 	{
 		pid_t	pid = msg->pids[i];
-		PGPROC *proc = BackendPidGetProc(pid);
-		if (!proc || !proc->pid)
+		PGPROC *current_proc = BackendPidGetProc(pid);
+		if (!current_proc || !current_proc->pid)
 			continue;
-		result = lcons(proc, result);
+		result = lcons(current_proc, result);
 	}
 
 #if PG_VERSION_NUM < 100000
