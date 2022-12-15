@@ -618,7 +618,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 						if (current_msg->result_code != QS_RETURNED)
 							continue;
 
-						AssertState(current_msg->result_code == QS_RETURNED);
+						Assert(current_msg->result_code == QS_RETURNED);
 
 						qs_stack = deserialize_stack(current_msg->stack,
 													 current_msg->stack_depth);
@@ -890,7 +890,7 @@ SendBgWorkerPids(void)
 	{
 		pid_t current_pid = lfirst_int(iter);
 
-		AssertState(current_pid > 0);
+		Assert(current_pid > 0);
 		msg->pids[i++] = current_pid;
 	}
 
