@@ -1360,6 +1360,12 @@ progress_bar(PG_FUNCTION_ARGS)
 
 	old_progress = 0;
 	progress = 0;
+	if (SRF_IS_FIRSTCALL())
+	{
+		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
+		params->reqid = ++reqid;
+	}
+
 	bg_worker_procs = GetRemoteBackendWorkers(proc);
 	msgs = GetRemoteBackendQueryStates(proc,
 									   bg_worker_procs,

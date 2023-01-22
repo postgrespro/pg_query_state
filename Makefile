@@ -42,3 +42,9 @@ submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all
 
 temp-install: EXTRA_INSTALL=contrib/pg_query_state
+
+submake-progress_bar:
+	$(MAKE) -C $(top_builddir)/contrib/pg_query_state
+
+check_progress_bar: submake-progress_bar temp-install
+	$(prove_check)
