@@ -1,11 +1,11 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index 4fa385b0ece..60854eee386 100644
+index defb75a..4245d28 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -88,12 +88,21 @@ typedef struct
- 	(((flags) & (((uint32) 1) << (uint32) (type))) != 0)
+@@ -95,6 +95,13 @@ typedef struct
+ #define BARRIER_CLEAR_BIT(flags, type) \
+ 	((flags) &= ~(((uint32) 1) << (uint32) (type)))
  
- static ProcSignalHeader *ProcSignal = NULL;
 +#define IsCustomProcSignalReason(reason) \
 +	((reason) >= PROCSIG_CUSTOM_1 && (reason) <= PROCSIG_CUSTOM_N)
 +
@@ -13,18 +13,19 @@ index 4fa385b0ece..60854eee386 100644
 +static bool CustomSignalProcessing[NUM_CUSTOM_PROCSIGNALS];
 +static ProcSignalHandler_type CustomInterruptHandlers[NUM_CUSTOM_PROCSIGNALS];
 +
- static volatile ProcSignalSlot *MyProcSignalSlot = NULL;
+ static ProcSignalHeader *ProcSignal = NULL;
+ static ProcSignalSlot *MyProcSignalSlot = NULL;
  
- static bool CheckProcSignal(ProcSignalReason reason);
- static void CleanupProcSignalState(int status, Datum arg);
- static void ProcessBarrierPlaceholder(void);
+@@ -103,6 +110,8 @@ static void CleanupProcSignalState(int status, Datum arg);
+ static void ResetProcSignalBarrierBits(uint32 flags);
+ static bool ProcessBarrierPlaceholder(void);
  
 +static void CheckAndSetCustomSignalInterrupts(void);
 +
  /*
   * ProcSignalShmemSize
   *		Compute space needed for procsignal's shared memory
-@@ -235,6 +244,36 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -246,6 +255,36 @@ CleanupProcSignalState(int status, Datum arg)
  	slot->pss_pid = 0;
  }
  
@@ -61,15 +62,13 @@ index 4fa385b0ece..60854eee386 100644
  /*
   * SendProcSignal
   *		Send a signal to a Postgres process
-@@ -585,9 +624,71 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -679,7 +718,62 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
 +	CheckAndSetCustomSignalInterrupts();
 +
  	SetLatch(MyLatch);
- 
- 	latch_sigusr1_handler();
  
  	errno = save_errno;
  }
@@ -116,7 +115,9 @@ index 4fa385b0ece..60854eee386 100644
 +	 */
 +	HOLD_INTERRUPTS();
 +
++	/* Check on expiring of custom signals and call its handlers if exist */
 +	for (i = 0; i < NUM_CUSTOM_PROCSIGNALS; i++)
++	{
 +		if (!CustomSignalProcessing[i] && CustomSignalPendings[i])
 +		{
 +			ProcSignalHandler_type  handler;
@@ -130,60 +131,26 @@ index 4fa385b0ece..60854eee386 100644
 +				CustomSignalProcessing[i] = false;
 +			}
 +		}
++	}
 +
 +	RESUME_INTERRUPTS();
 +}
+\ No newline at end of file
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 7bc03ae4edc..3debd63bd7d 100644
+index 8cea10c..dd77c98 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -5,6 +5,7 @@
-  *
-  * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
-  * Portions Copyright (c) 1994, Regents of the University of California
-+ * Portions Copyright (c) 2020-2021, Postgres Professional
-  *
-  *
-  * IDENTIFICATION
-@@ -74,6 +75,7 @@
- #include "tcop/pquery.h"
- #include "tcop/tcopprot.h"
- #include "tcop/utility.h"
-+#include "utils/builtins.h"
- #include "utils/lsyscache.h"
- #include "utils/memutils.h"
- #include "utils/ps_status.h"
-@@ -3231,6 +3233,8 @@ ProcessInterrupts(void)
- 
+@@ -3364,6 +3364,8 @@ ProcessInterrupts(void)
  	if (ParallelMessagePending)
  		HandleParallelMessages();
-+
+ 
 +	CheckAndHandleCustomSignals();
- }
- 
- 
-@@ -3576,7 +3580,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
- 	 * postmaster/postmaster.c (the option sets should not conflict) and with
- 	 * the common help() function in main/main.c.
- 	 */
--	while ((flag = getopt(argc, argv, "B:bc:C:D:d:EeFf:h:ijk:lN:nOo:Pp:r:S:sTt:v:W:-:")) != -1)
-+	while ((flag = getopt(argc, argv, "B:bc:C:D:d:EeFf:h:ijk:lN:nOo:Pp:r:S:sTt:v:W:Z-:")) != -1)
- 	{
- 		switch (flag)
- 		{
-@@ -3712,6 +3716,10 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
- 				SetConfigOption("post_auth_delay", optarg, ctx, gucsource);
- 				break;
- 
-+			case 'Z':
-+				/* ignored for consistency with the postmaster */
-+				break;
 +
- 			case 'c':
- 			case '-':
- 				{
+ 	if (LogMemoryContextPending)
+ 		ProcessLogMemoryContextInterrupt();
+ }
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index 5cb39697f38..c05f60fa719 100644
+index eec186b..74af186 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
 @@ -17,6 +17,8 @@
@@ -204,7 +171,7 @@ index 5cb39697f38..c05f60fa719 100644
  	PROCSIG_CATCHUP_INTERRUPT,	/* sinval catchup interrupt */
  	PROCSIG_NOTIFY_INTERRUPT,	/* listen/notify interrupt */
  	PROCSIG_PARALLEL_MESSAGE,	/* message from cooperating parallel backend */
-@@ -43,6 +47,14 @@ typedef enum
+@@ -44,6 +48,14 @@ typedef enum
  	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
  	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
  
@@ -219,7 +186,7 @@ index 5cb39697f38..c05f60fa719 100644
  	NUM_PROCSIGNALS				/* Must be last! */
  } ProcSignalReason;
  
-@@ -55,6 +67,8 @@ typedef enum
+@@ -56,6 +68,8 @@ typedef enum
  	 */
  	PROCSIGNAL_BARRIER_PLACEHOLDER = 0
  } ProcSignalBarrierType;
@@ -228,7 +195,7 @@ index 5cb39697f38..c05f60fa719 100644
  
  /*
   * prototypes for functions in procsignal.c
-@@ -63,12 +77,15 @@ extern Size ProcSignalShmemSize(void);
+@@ -64,12 +78,15 @@ extern Size ProcSignalShmemSize(void);
  extern void ProcSignalShmemInit(void);
  
  extern void ProcSignalInit(int pss_idx);
@@ -244,3 +211,6 @@ index 5cb39697f38..c05f60fa719 100644
  
  extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
  
+-- 
+2.25.1
+

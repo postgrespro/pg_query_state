@@ -48,7 +48,6 @@ static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 void		_PG_init(void);
-void		_PG_fini(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
@@ -102,10 +101,10 @@ static List *GetRemoteBackendQueryStates(PGPROC *leader,
 										 ExplainFormat format);
 
 /* Shared memory variables */
-shm_toc			*toc = NULL;
+shm_toc			   *toc = NULL;
 RemoteUserIdResult *counterpart_userid = NULL;
-pg_qs_params   	*params = NULL;
-shm_mq 			*mq = NULL;
+pg_qs_params   	   *params = NULL;
+shm_mq 			   *mq = NULL;
 
 /*
  * Estimate amount of shared memory needed.
@@ -179,6 +178,11 @@ pg_qs_shmem_startup(void)
 	module_initialized = true;
 }
 
+#if PG_VERSION_NUM >= 150000
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static void pg_qs_shmem_request(void);
+#endif
+
 /*
  * Module load callback
  */
@@ -188,12 +192,12 @@ _PG_init(void)
 	if (!process_shared_preload_libraries_in_progress)
 		return;
 
-	/*
-	 * Request additional shared resources.  (These are no-ops if we're not in
-	 * the postmaster process.)  We'll allocate or attach to the shared
-	 * resources in qs_shmem_startup().
-	 */
+#if PG_VERSION_NUM >= 150000
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = pg_qs_shmem_request;
+#else
 	RequestAddinShmemSpace(pg_qs_shmem_size());
+#endif
 
 	/* Register interrupt on custom signal of polling query state */
 	UserIdPollReason = RegisterCustomProcSignalHandler(SendCurrentUserId);
@@ -204,7 +208,7 @@ _PG_init(void)
 		|| UserIdPollReason == INVALID_PROCSIGNAL)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
+						  errmsg("pg_query_state isn't loaded: insufficient custom ProcSignal slots")));
 		return;
 	}
 
@@ -252,23 +256,16 @@ _PG_init(void)
 	shmem_startup_hook = pg_qs_shmem_startup;
 }
 
-/*
- * Module unload callback
- */
-void
-_PG_fini(void)
+#if PG_VERSION_NUM >= 150000
+static void
+pg_qs_shmem_request(void)
 {
-	module_initialized = false;
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
 
-	/* clear global state */
-	list_free(QueryDescStack);
-
-	/* Uninstall hooks. */
-	ExecutorStart_hook = prev_ExecutorStart;
-	ExecutorRun_hook = prev_ExecutorRun;
-	ExecutorFinish_hook = prev_ExecutorFinish;
-	shmem_startup_hook = prev_shmem_startup_hook;
+	RequestAddinShmemSpace(pg_qs_shmem_size());
 }
+#endif
 
 /*
  * ExecutorStart hook:
@@ -438,7 +435,7 @@ deserialize_stack(char *src, int stack_depth)
 {
 	List 	*result = NIL;
 	char	*curr_ptr = src;
-	int		i;
+	int		 i;
 
 	for (i = 0; i < stack_depth; i++)
 	{
@@ -541,14 +538,18 @@ pg_query_state(PG_FUNCTION_ARGS)
 				break;
 			}
 		}
-		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
-		params->reqid = ++reqid;
-		pg_write_barrier();
 
 		counterpart_user_id = GetRemoteBackendUserId(proc);
 		if (!(superuser() || GetUserId() == counterpart_user_id))
+		{
+			UnlockShmem(&tag);
 			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 							errmsg("permission denied")));
+		}
+
+		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
+		params->reqid = ++reqid;
+		pg_write_barrier();
 
 		bg_worker_procs = GetRemoteBackendWorkers(proc);
 
@@ -598,10 +599,10 @@ pg_query_state(PG_FUNCTION_ARGS)
 					/* print warnings if exist */
 					if (msg->warnings & TIMINIG_OFF_WARNING)
 						ereport(WARNING, (errcode(ERRCODE_WARNING),
-										errmsg("timing statistics disabled")));
+										  errmsg("timing statistics disabled")));
 					if (msg->warnings & BUFFERS_OFF_WARNING)
 						ereport(WARNING, (errcode(ERRCODE_WARNING),
-										errmsg("buffers statistics disabled")));
+										  errmsg("buffers statistics disabled")));
 
 					oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
@@ -611,17 +612,18 @@ pg_query_state(PG_FUNCTION_ARGS)
 					foreach(i, msgs)
 					{
 						List 		*qs_stack;
-						shm_mq_msg	*msg = (shm_mq_msg *) lfirst(i);
+						shm_mq_msg	*current_msg = (shm_mq_msg *) lfirst(i);
 						proc_state	*p_state = (proc_state *) palloc(sizeof(proc_state));
 
-						if (msg->result_code != QS_RETURNED)
+						if (current_msg->result_code != QS_RETURNED)
 							continue;
 
-						AssertState(msg->result_code == QS_RETURNED);
+						Assert(current_msg->result_code == QS_RETURNED);
 
-						qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
+						qs_stack = deserialize_stack(current_msg->stack,
+													 current_msg->stack_depth);
 
-						p_state->proc = msg->proc;
+						p_state->proc = current_msg->proc;
 						p_state->stack = qs_stack;
 						p_state->frame_index = 0;
 						p_state->frame_cursor = list_head(qs_stack);
@@ -863,6 +865,7 @@ SendBgWorkerPids(void)
 	int				 i;
 	shm_mq_handle 	*mqh;
 	LOCKTAG		     tag;
+	shm_mq_result	 result;
 
 	LockShmem(&tag, PG_QS_SND_KEY);
 
@@ -887,11 +890,20 @@ SendBgWorkerPids(void)
 	{
 		pid_t current_pid = lfirst_int(iter);
 
-		AssertState(current_pid > 0);
+		Assert(current_pid > 0);
 		msg->pids[i++] = current_pid;
 	}
 
-	shm_mq_send(mqh, msg_len, msg, false);
+#if PG_VERSION_NUM < 150000
+	result = shm_mq_send(mqh, msg_len, msg, false);
+#else
+	result = shm_mq_send(mqh, msg_len, msg, false, true);
+#endif
+
+	/* Check for failure. */
+	if(result == SHM_MQ_DETACHED)
+		elog(WARNING, "could not send message queue to shared-memory queue: receiver has been detached");
+
 	UnlockShmem(&tag);
 }
 
@@ -932,10 +944,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 	for (i = 0; i < msg->number; i++)
 	{
 		pid_t	pid = msg->pids[i];
-		PGPROC *proc = BackendPidGetProc(pid);
-		if (!proc || !proc->pid)
+		PGPROC *current_proc = BackendPidGetProc(pid);
+		if (!current_proc || !current_proc->pid)
 			continue;
-		result = lcons(proc, result);
+		result = lcons(current_proc, result);
 	}
 
 #if PG_VERSION_NUM < 100000
@@ -948,10 +960,10 @@ GetRemoteBackendWorkers(PGPROC *proc)
 
 signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("invalid send signal")));
+					errmsg("invalid send signal")));
 mq_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("error in message queue data transmitting")));
+					errmsg("error in message queue data transmitting")));
 
 	return NIL;
 }
@@ -969,12 +981,12 @@ static shm_mq_result
 receive_msg_by_parts(shm_mq_handle *mqh, Size *total, void **datap,
 						int64 timeout, int *rc, bool nowait)
 {
-	shm_mq_result mq_receive_result;
-	shm_mq_msg	*buff;
-	int			offset;
-	Size		*expected;
-	Size		expected_data;
-	Size		len;
+	shm_mq_result	mq_receive_result;
+	shm_mq_msg	   *buff;
+	int				offset;
+	Size		   *expected;
+	Size			expected_data;
+	Size			len;
 
 	/* Get the expected number of bytes in message */
 	mq_receive_result = shm_mq_receive(mqh, &len, (void **) &expected, nowait);
@@ -1102,7 +1114,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	mqh = shm_mq_attach(mq, NULL, NULL);
 	elog(DEBUG1, "Wait response from leader %d", leader->pid);
 	mq_receive_result = receive_msg_by_parts(mqh, &len, (void **) &msg,
-												0, NULL, false);
+											 0, NULL, false);
 	if (mq_receive_result != SHM_MQ_SUCCESS)
 		goto mq_error;
 	if (msg->reqid != reqid)
@@ -1121,7 +1133,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	 */
 	foreach(iter, alive_procs)
 	{
-		PGPROC 			*proc = (PGPROC *) lfirst(iter);
+		PGPROC 	*proc = (PGPROC *) lfirst(iter);
 
 		/* prepare message queue to transfer data */
 		elog(DEBUG1, "Wait response from worker %d", proc->pid);
@@ -1161,7 +1173,7 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 signal_error:
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("invalid send signal")));
+					errmsg("invalid send signal")));
 mq_error:
 #if PG_VERSION_NUM < 100000
 	shm_mq_detach(mq);
@@ -1169,7 +1181,7 @@ mq_error:
 	shm_mq_detach(mqh);
 #endif
 	ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("error in message queue data transmitting")));
+					errmsg("error in message queue data transmitting")));
 
 	return NIL;
 }
