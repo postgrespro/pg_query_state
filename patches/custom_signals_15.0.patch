@@ -2,10 +2,10 @@ diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/proc
 index defb75a..4245d28 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -95,6 +95,13 @@ typedef struct
+@@ -96,6 +96,13 @@ typedef struct
  #define BARRIER_CLEAR_BIT(flags, type) \
  	((flags) &= ~(((uint32) 1) << (uint32) (type)))
- 
+
 +#define IsCustomProcSignalReason(reason) \
 +	((reason) >= PROCSIG_CUSTOM_1 && (reason) <= PROCSIG_CUSTOM_N)
 +
@@ -15,20 +15,20 @@ index defb75a..4245d28 100644
 +
  static ProcSignalHeader *ProcSignal = NULL;
  static ProcSignalSlot *MyProcSignalSlot = NULL;
- 
-@@ -103,6 +110,8 @@ static void CleanupProcSignalState(int status, Datum arg);
+
+@@ -103,6 +110,8 @@ static bool CheckProcSignal(ProcSignalReason reason);
+ static void CleanupProcSignalState(int status, Datum arg);
  static void ResetProcSignalBarrierBits(uint32 flags);
- static bool ProcessBarrierPlaceholder(void);
- 
+
 +static void CheckAndSetCustomSignalInterrupts(void);
 +
  /*
   * ProcSignalShmemSize
-  *		Compute space needed for procsignal's shared memory
+  *		Compute space needed for ProcSignal's shared memory
 @@ -246,6 +255,36 @@ CleanupProcSignalState(int status, Datum arg)
  	slot->pss_pid = 0;
  }
- 
+
 +/*
 + * RegisterCustomProcSignalHandler
 + *		Assign specific handler of custom process signal with new
@@ -62,7 +62,7 @@ index defb75a..4245d28 100644
  /*
   * SendProcSignal
   *		Send a signal to a Postgres process
-@@ -679,7 +718,62 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -675,7 +714,72 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -135,12 +135,12 @@ index defb75a..4245d28 100644
 +
 +	RESUME_INTERRUPTS();
 +}
-\ No newline at end of file
++
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
 index 8cea10c..dd77c98 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -3364,6 +3364,8 @@ ProcessInterrupts(void)
+@@ -3402,6 +3402,8 @@ ProcessInterrupts(void)
  	if (ParallelMessagePending)
  		HandleParallelMessages();
  
@@ -186,16 +186,17 @@ index eec186b..74af186 100644
  	NUM_PROCSIGNALS				/* Must be last! */
  } ProcSignalReason;
  
-@@ -56,6 +68,8 @@ typedef enum
- 	 */
- 	PROCSIGNAL_BARRIER_PLACEHOLDER = 0
+@@ -51,6 +63,9 @@ typedef enum
+ {
+ 	PROCSIGNAL_BARRIER_SMGRRELEASE	/* ask smgr to close files */
  } ProcSignalBarrierType;
++
 +/* Handler of custom process signal */
 +typedef void (*ProcSignalHandler_type) (void);
  
  /*
   * prototypes for functions in procsignal.c
-@@ -64,12 +78,15 @@ extern Size ProcSignalShmemSize(void);
+@@ -59,12 +74,15 @@ extern Size ProcSignalShmemSize(void);
  extern void ProcSignalShmemInit(void);
  
  extern void ProcSignalInit(int pss_idx);
