@@ -22,6 +22,8 @@ notifications:
         on_failure: always
 
 env:
+    - PG_VERSION=15 LEVEL=hardcore USE_TPCDS=0
+    - PG_VERSION=15
     - PG_VERSION=14 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=14
     - PG_VERSION=13 LEVEL=hardcore USE_TPCDS=0
