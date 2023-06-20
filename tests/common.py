@@ -1,6 +1,6 @@
 '''
 common.py
-Copyright (c) 2016-2020, Postgres Professional
+Copyright (c) 2016-2023, Postgres Professional
 '''
 
 import psycopg2
