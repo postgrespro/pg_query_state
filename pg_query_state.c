@@ -365,7 +365,11 @@ search_be_status(int pid)
 
 	for (beid = 1; beid <= pgstat_fetch_stat_numbackends(); beid++)
 	{
+#if PG_VERSION_NUM >= 160000
+		PgBackendStatus *be_status = pgstat_get_beentry_by_backend_id(beid);
+#else
 		PgBackendStatus *be_status = pgstat_fetch_stat_beentry(beid);
+#endif
 
 		if (be_status && be_status->st_procpid == pid)
 			return be_status;
