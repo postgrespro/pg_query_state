@@ -2,7 +2,7 @@
  * pg_query_state.c
  *		Extract information about query state from other backend
  *
- * Copyright (c) 2016-2023, Postgres Professional
+ * Copyright (c) 2016-2024, Postgres Professional
  *
  *	  contrib/pg_query_state/pg_query_state.c
  * IDENTIFICATION

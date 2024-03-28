@@ -1,0 +1,229 @@
+diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
+index c85cb5cc18..37ae4b3759 100644
+--- a/src/backend/storage/ipc/procsignal.c
++++ b/src/backend/storage/ipc/procsignal.c
+@@ -6,6 +6,7 @@
+  *
+  * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+  * Portions Copyright (c) 1994, Regents of the University of California
++ * Portions Copyright (c) 2024, Postgres Professional
+  *
+  * IDENTIFICATION
+  *	  src/backend/storage/ipc/procsignal.c
+@@ -97,6 +98,13 @@ typedef struct
+ #define BARRIER_CLEAR_BIT(flags, type) \
+ 	((flags) &= ~(((uint32) 1) << (uint32) (type)))
+ 
++#define IsCustomProcSignalReason(reason) \
++	((reason) >= PROCSIG_CUSTOM_1 && (reason) <= PROCSIG_CUSTOM_N)
++
++static bool CustomSignalPendings[NUM_CUSTOM_PROCSIGNALS];
++static bool CustomSignalProcessing[NUM_CUSTOM_PROCSIGNALS];
++static ProcSignalHandler_type CustomInterruptHandlers[NUM_CUSTOM_PROCSIGNALS];
++
+ static ProcSignalHeader *ProcSignal = NULL;
+ static ProcSignalSlot *MyProcSignalSlot = NULL;
+ 
+@@ -104,6 +112,8 @@ static bool CheckProcSignal(ProcSignalReason reason);
+ static void CleanupProcSignalState(int status, Datum arg);
+ static void ResetProcSignalBarrierBits(uint32 flags);
+ 
++static void CheckAndSetCustomSignalInterrupts(void);
++
+ /*
+  * ProcSignalShmemSize
+  *		Compute space needed for ProcSignal's shared memory
+@@ -247,6 +257,36 @@ CleanupProcSignalState(int status, Datum arg)
+ 	slot->pss_pid = 0;
+ }
+ 
++/*
++ * RegisterCustomProcSignalHandler
++ *		Assign specific handler of custom process signal with new
++ *		ProcSignalReason key.
++ *
++ * This function has to be called in _PG_init function of extensions at the
++ * stage of loading shared preloaded libraries. Otherwise it throws fatal error.
++ *
++ * Return INVALID_PROCSIGNAL if all slots for custom signals are occupied.
++ */
++ProcSignalReason
++RegisterCustomProcSignalHandler(ProcSignalHandler_type handler)
++{
++	ProcSignalReason reason;
++
++	if (!process_shared_preload_libraries_in_progress)
++		ereport(FATAL, (errcode(ERRCODE_INTERNAL_ERROR),
++						errmsg("cannot register custom signal after startup")));
++
++	/* Iterate through custom signal slots to find a free one */
++	for (reason = PROCSIG_CUSTOM_1; reason <= PROCSIG_CUSTOM_N; reason++)
++		if (!CustomInterruptHandlers[reason - PROCSIG_CUSTOM_1])
++		{
++			CustomInterruptHandlers[reason - PROCSIG_CUSTOM_1] = handler;
++			return reason;
++		}
++
++	return INVALID_PROCSIGNAL;
++}
++
+ /*
+  * SendProcSignal
+  *		Send a signal to a Postgres process
+@@ -682,7 +722,72 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+ 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
+ 		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
+ 
++	CheckAndSetCustomSignalInterrupts();
++
+ 	SetLatch(MyLatch);
+ 
+ 	errno = save_errno;
+ }
++
++/*
++ * Handle receipt of an interrupt indicating any of custom process signals.
++ */
++static void
++CheckAndSetCustomSignalInterrupts()
++{
++	ProcSignalReason	reason;
++
++	for (reason = PROCSIG_CUSTOM_1; reason <= PROCSIG_CUSTOM_N; reason++)
++	{
++		if (CheckProcSignal(reason))
++		{
++
++			/* set interrupt flags */
++			InterruptPending = true;
++			CustomSignalPendings[reason - PROCSIG_CUSTOM_1] = true;
++		}
++	}
++
++	SetLatch(MyLatch);
++}
++
++/*
++ * CheckAndHandleCustomSignals
++ *		Check custom signal flags and call handler assigned to that signal
++ *		if it is not NULL
++ *
++ * This function is called within CHECK_FOR_INTERRUPTS if interrupt occurred.
++ */
++void
++CheckAndHandleCustomSignals(void)
++{
++	int i;
++
++	/*
++	 * This is invoked from ProcessInterrupts(), and since some of the
++	 * functions it calls contain CHECK_FOR_INTERRUPTS(), there is a potential
++	 * for recursive calls if more signals are received while this runs, so
++	 * let's block interrupts until done.
++	 */
++	HOLD_INTERRUPTS();
++
++	/* Check on expiring of custom signals and call its handlers if exist */
++	for (i = 0; i < NUM_CUSTOM_PROCSIGNALS; i++)
++	{
++		if (!CustomSignalProcessing[i] && CustomSignalPendings[i])
++		{
++			ProcSignalHandler_type  handler;
++
++			CustomSignalPendings[i] = false;
++			handler = CustomInterruptHandlers[i];
++			if (handler != NULL)
++			{
++				CustomSignalProcessing[i] = true;
++				handler();
++				CustomSignalProcessing[i] = false;
++			}
++		}
++	}
++
++	RESUME_INTERRUPTS();
++}
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 36cc99ec9c..a3acce427a 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -3442,6 +3442,8 @@ ProcessInterrupts(void)
+ 	if (ParallelMessagePending)
+ 		HandleParallelMessages();
+ 
++	CheckAndHandleCustomSignals();
++
+ 	if (LogMemoryContextPending)
+ 		ProcessLogMemoryContextInterrupt();
+ 
+diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
+index 2f52100b00..0e31a5771e 100644
+--- a/src/include/storage/procsignal.h
++++ b/src/include/storage/procsignal.h
+@@ -6,6 +6,7 @@
+  *
+  * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+  * Portions Copyright (c) 1994, Regents of the University of California
++ * Portions Copyright (c) 2024, Postgres Professional
+  *
+  * src/include/storage/procsignal.h
+  *
+@@ -17,6 +18,8 @@
+ #include "storage/backendid.h"
+ 
+ 
++#define NUM_CUSTOM_PROCSIGNALS 64
++
+ /*
+  * Reasons for signaling a Postgres child process (a backend or an auxiliary
+  * process, like checkpointer).  We can cope with concurrent signals for different
+@@ -29,6 +32,8 @@
+  */
+ typedef enum
+ {
++	INVALID_PROCSIGNAL = -1,	/* Must be first */
++
+ 	PROCSIG_CATCHUP_INTERRUPT,	/* sinval catchup interrupt */
+ 	PROCSIG_NOTIFY_INTERRUPT,	/* listen/notify interrupt */
+ 	PROCSIG_PARALLEL_MESSAGE,	/* message from cooperating parallel backend */
+@@ -46,6 +51,14 @@ typedef enum
+ 	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
+ 	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
+ 
++	PROCSIG_CUSTOM_1,
++	/*
++	 * PROCSIG_CUSTOM_2,
++	 * ...,
++	 * PROCSIG_CUSTOM_N-1,
++	 */
++	PROCSIG_CUSTOM_N = PROCSIG_CUSTOM_1 + NUM_CUSTOM_PROCSIGNALS - 1,
++
+ 	NUM_PROCSIGNALS				/* Must be last! */
+ } ProcSignalReason;
+ 
+@@ -54,6 +67,9 @@ typedef enum
+ 	PROCSIGNAL_BARRIER_SMGRRELEASE	/* ask smgr to close files */
+ } ProcSignalBarrierType;
+ 
++/* Handler of custom process signal */
++typedef void (*ProcSignalHandler_type) (void);
++
+ /*
+  * prototypes for functions in procsignal.c
+  */
+@@ -61,12 +77,15 @@ extern Size ProcSignalShmemSize(void);
+ extern void ProcSignalShmemInit(void);
+ 
+ extern void ProcSignalInit(int pss_idx);
++extern ProcSignalReason
++	RegisterCustomProcSignalHandler(ProcSignalHandler_type handler);
+ extern int	SendProcSignal(pid_t pid, ProcSignalReason reason,
+ 						   BackendId backendId);
+ 
+ extern uint64 EmitProcSignalBarrier(ProcSignalBarrierType type);
+ extern void WaitForProcSignalBarrier(uint64 generation);
+ extern void ProcessProcSignalBarrier(void);
++extern void CheckAndHandleCustomSignals(void);
+ 
+ extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
+ 
