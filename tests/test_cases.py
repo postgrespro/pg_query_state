@@ -379,6 +379,9 @@ def test_timing_buffers_conflicts(config):
 	timing_pattern = '(?:running time=\d+.\d+)|(?:actual time=\d+.\d+..\d+.\d+)'
 	buffers_pattern = 'Buffers:'
 
+	common.set_guc(acon, 'pg_query_state.enable_timing', 'off')
+	common.set_guc(acon, 'pg_query_state.enable_buffers', 'off')
+
 	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True, 'buffers': False})
 	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3])
 	assert notices == ['WARNING:  timing statistics disabled\n']
