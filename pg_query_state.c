@@ -365,10 +365,16 @@ search_be_status(int pid)
 
 	for (beid = 1; beid <= pgstat_fetch_stat_numbackends(); beid++)
 	{
-#if PG_VERSION_NUM >= 170000
-		PgBackendStatus *be_status = pgstat_get_beentry_by_proc_number(beid);
-#elif PG_VERSION_NUM >= 160000
-		PgBackendStatus *be_status = pgstat_get_beentry_by_backend_id(beid);
+#if PG_VERSION_NUM >= 160000
+		LocalPgBackendStatus *lbe_status = pgstat_get_local_beentry_by_index(beid);
+		PgBackendStatus *be_status;
+
+		Assert(lbe_status);
+	#ifndef PGPRO_STD
+		be_status = &lbe_status->backendStatus;
+	#else
+		be_status = lbe_status->backendStatus;
+	#endif
 #else
 		PgBackendStatus *be_status = pgstat_fetch_stat_beentry(beid);
 #endif
