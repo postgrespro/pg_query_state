@@ -366,7 +366,15 @@ search_be_status(int pid)
 	for (beid = 1; beid <= pgstat_fetch_stat_numbackends(); beid++)
 	{
 #if PG_VERSION_NUM >= 160000
-		PgBackendStatus *be_status = pgstat_get_beentry_by_backend_id(beid);
+		LocalPgBackendStatus *lbe_status = pgstat_get_local_beentry_by_index(beid);
+		PgBackendStatus *be_status;
+
+		Assert(lbe_status);
+	#ifndef PGPRO_STD
+		be_status = &lbe_status->backendStatus;
+	#else
+		be_status = lbe_status->backendStatus;
+	#endif
 #else
 		PgBackendStatus *be_status = pgstat_fetch_stat_beentry(beid);
 #endif
@@ -505,7 +513,14 @@ pg_query_state(PG_FUNCTION_ARGS)
 							errmsg("attempt to extract state of current process")));
 
 		proc = BackendPidGetProc(pid);
-		if (!proc || proc->backendId == InvalidBackendId || proc->databaseId == InvalidOid || proc->roleId == InvalidOid)
+		if (!proc ||
+#if PG_VERSION_NUM >= 170000
+			proc->vxid.procNumber == INVALID_PROC_NUMBER ||
+#else
+			proc->backendId == InvalidBackendId ||
+#endif
+			proc->databaseId == InvalidOid ||
+			proc->roleId == InvalidOid)
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("backend with pid=%d not found", pid)));
 
@@ -730,7 +745,12 @@ GetRemoteBackendUserId(PGPROC *proc)
 {
 	Oid result;
 
+#if PG_VERSION_NUM >= 170000
+	Assert(proc && proc->vxid.procNumber != INVALID_PROC_NUMBER);
+#else
 	Assert(proc && proc->backendId != InvalidBackendId);
+#endif
+
 	Assert(UserIdPollReason != INVALID_PROCSIGNAL);
 	Assert(counterpart_userid);
 
@@ -738,7 +758,12 @@ GetRemoteBackendUserId(PGPROC *proc)
 	counterpart_userid->caller = MyLatch;
 	pg_write_barrier();
 
+#if PG_VERSION_NUM >= 170000
+	SendProcSignal(proc->pid, UserIdPollReason, proc->vxid.procNumber);
+#else
 	SendProcSignal(proc->pid, UserIdPollReason, proc->backendId);
+#endif
+
 	for (;;)
 	{
 		SpinLockAcquire(&counterpart_userid->mutex);
@@ -926,7 +951,12 @@ GetRemoteBackendWorkers(PGPROC *proc)
 	List			*result = NIL;
 	LOCKTAG			 tag;
 
+#if PG_VERSION_NUM >= 170000
+	Assert(proc && proc->vxid.procNumber != INVALID_PROC_NUMBER);
+#else
 	Assert(proc && proc->backendId != InvalidBackendId);
+#endif
+
 	Assert(WorkerPollReason != INVALID_PROCSIGNAL);
 	Assert(mq);
 
@@ -936,7 +966,12 @@ GetRemoteBackendWorkers(PGPROC *proc)
 	shm_mq_set_receiver(mq, MyProc);
 	UnlockShmem(&tag);
 
+#if PG_VERSION_NUM >= 170000
+	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->vxid.procNumber);
+#else
 	sig_result = SendProcSignal(proc->pid, WorkerPollReason, proc->backendId);
+#endif
+
 	if (sig_result == -1)
 		goto signal_error;
 
@@ -1088,9 +1123,16 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 	 * send signal `QueryStatePollReason` to all processes and define all alive
 	 * 		ones
 	 */
+#if PG_VERSION_NUM >= 170000
+	sig_result = SendProcSignal(leader->pid,
+								QueryStatePollReason,
+								leader->vxid.procNumber);
+#else
 	sig_result = SendProcSignal(leader->pid,
 								QueryStatePollReason,
 								leader->backendId);
+#endif
+
 	if (sig_result == -1)
 		goto signal_error;
 	foreach(iter, pworkers)
@@ -1101,9 +1143,16 @@ GetRemoteBackendQueryStates(PGPROC *leader,
 
 		pg_atomic_add_fetch_u32(&counterpart_userid->n_peers, 1);
 
+#if PG_VERSION_NUM >= 170000
+		sig_result = SendProcSignal(proc->pid,
+									QueryStatePollReason,
+									proc->vxid.procNumber);
+#else
 		sig_result = SendProcSignal(proc->pid,
 									QueryStatePollReason,
 									proc->backendId);
+#endif
+
 		if (sig_result == -1)
 		{
 			if (errno != ESRCH)
