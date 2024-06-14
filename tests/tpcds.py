@@ -26,7 +26,10 @@ def setup_tpcds(config):
 	try:
 		conn = psycopg2.connect(**config)
 		cur = conn.cursor()
+	except Exception as e:
+		raise DataLoadException('Load failed: %s' % e)
 
+	try:
 		# Create pg_query_state extension
 		cur.execute('CREATE EXTENSION IF NOT EXISTS pg_query_state')
 
@@ -131,8 +134,8 @@ def run_tpcds(config):
 			timeout_list.append(i + 1)
 
 	if err_count > 2:
-		print("ERROR: error in message queue data transmitting")
-		raise
+		print("\nERROR: error in message queue data transmitting")
+		raise Exception('error was received %d times'%err_count)
 	elif err_count > 0:
 		print(err_count, " times there was error in message queue data transmitting")
 
