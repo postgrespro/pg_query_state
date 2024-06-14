@@ -8,6 +8,10 @@ import subprocess
 import time
 
 import progressbar
+# This actually imports progressbar2 but `import progressbar2' itself doesn't work.
+# In case of problems with the progressbar/progressbar2, check that you have the
+# progressbar2 installed and the path to it or venv is specified.
+
 import psycopg2.extensions
 
 import common
@@ -22,7 +26,10 @@ def setup_tpcds(config):
 	try:
 		conn = psycopg2.connect(**config)
 		cur = conn.cursor()
+	except Exception as e:
+		raise DataLoadException('Load failed: %s' % e)
 
+	try:
 		# Create pg_query_state extension
 		cur.execute('CREATE EXTENSION IF NOT EXISTS pg_query_state')
 
@@ -55,13 +62,13 @@ def run_tpcds(config):
 	TPC_DS_STATEMENT_TIMEOUT = 20000	# statement_timeout in ms
 
 	print('Preparing TPC-DS queries...')
+	err_count = 0
 	queries = []
 	for query_file in sorted(os.listdir('tmp_stress/tpcds-result-reproduction/query_qualification/')):
 		with open('tmp_stress/tpcds-result-reproduction/query_qualification/%s' % query_file, 'r') as f:
 			queries.append(f.read())
 
 	acon, = common.n_async_connect(config)
-	pid = acon.get_backend_pid()
 
 	print('Starting TPC-DS queries...')
 	timeout_list = []
@@ -84,8 +91,25 @@ def run_tpcds(config):
 			PG_QS_DELAY, BEFORE_GETTING_QS_DELAY = 0.1, 0.1
 			BEFORE_GETTING_QS, GETTING_QS = range(2)
 			state, n_first_getting_qs_retries = BEFORE_GETTING_QS, 0
+
+			pg_qs_args = {
+				'config': config,
+				'pid': acon.get_backend_pid()
+			}
+
 			while True:
-				result, notices = common.pg_query_state(config, pid)
+				try:
+					result, notices = common.pg_query_state(**pg_qs_args)
+				except Exception as e:
+					# do not consider the test failed if the "error in message
+					# queue data transmitting" is received, this may happen with
+					# some small probability, but if it happens too often it is
+					# a problem, we will handle this case after the loop
+					if "error in message queue data transmitting" in e.pgerror:
+						err_count += 1
+					else:
+						raise e
+
 				# run state machine to determine the first getting of query state
 				# and query finishing
 				if state == BEFORE_GETTING_QS:
@@ -108,6 +132,12 @@ def run_tpcds(config):
 
 		except psycopg2.extensions.QueryCanceledError:
 			timeout_list.append(i + 1)
+
+	if err_count > 2:
+		print("\nERROR: error in message queue data transmitting")
+		raise Exception('error was received %d times'%err_count)
+	elif err_count > 0:
+		print(err_count, " times there was error in message queue data transmitting")
 
 	common.n_close((acon,))
 
