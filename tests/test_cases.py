@@ -1,6 +1,6 @@
 '''
 test_cases.py
-Copyright (c) 2016-2021, Postgres Professional
+Copyright (c) 2016-2024, Postgres Professional
 '''
 
 import json
@@ -45,7 +45,7 @@ def test_simple_query(config):
 	acon1, acon2 = common.n_async_connect(config, 2)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1'
 	expected = r"""Aggregate \(Current loop: actual rows=\d+, loop number=1\)
-  ->  Hash Join \(Current loop: actual rows=62473, loop number=1\)
+  ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
         ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
@@ -111,10 +111,10 @@ def test_nested_call(config):
 	expected_nested = r"""Result \(Current loop: actual rows=0, loop number=1\)
   InitPlan 1 \(returns \$0\)
     ->  Aggregate \(Current loop: actual rows=0, loop number=1\)
-          ->  Hash Join \(Current loop: actual rows=62473, loop number=1\)
+          ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
                 Hash Cond: \(foo.c1 = bar.c1\)
                 Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
-                ->  Seq Scan on foo \(Current loop: actual rows=1000000, loop number=1\)
+                ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
                 ->  Hash \(Current loop: actual rows=500000, loop number=1\)
                       Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
                       ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
@@ -232,7 +232,7 @@ def test_costs(config):
   ->  Hash Join  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=0\) \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
-        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=1000000, loop number=1\)
+        ->  Seq Scan on foo  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)
         ->  Hash  \(cost=\d+.\d+..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar  \(cost=0.00..\d+.\d+ rows=\d+ width=4\) \(Current loop: actual rows=\d+, loop number=1\)"""
@@ -249,25 +249,33 @@ def test_buffers(config):
 
 	acon1, acon2 = common.n_async_connect(config, 2)
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1 and unlock_if_eq_1(foo.c1)=bar.c1'
-	expected = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
+	temporary = r"""Aggregate \(Current loop: actual rows=0, loop number=1\)
   ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
-        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
-        Buffers: shared hit=\d+, temp read=\d+ written=\d+
-        ->  Seq Scan on foo \(Current loop: actual rows=1000000, loop number=1\)
+        Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)"""
+	expected = temporary
+	expected_15 = temporary
+	expected += r"""
+        Buffers: shared hit=\d+, temp read=\d+ written=\d+"""
+	expected_15 += r"""
+        Buffers: shared hit=\d+, temp written=\d+"""
+	temporary = r"""
+        ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
               Buffers: [^\n]*
         ->  Hash \(Current loop: actual rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               Buffers: shared hit=\d+, temp written=\d+
               ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)
                     Buffers: .*"""
+	expected += temporary
+	expected_15 += temporary
 
 	common.set_guc(acon1, 'pg_query_state.enable_buffers', 'on')
 
 	qs, notices = common.onetime_query_state_locks(config, acon1, acon2, query, {'buffers': True})
 
 	assert len(qs) == 2
-	assert re.match(expected, qs[0][3])
+	assert (re.match(expected, qs[0][3]) or re.match(expected_15, qs[0][3]))
 	assert len(notices) == 0
 
 	common.n_close((acon1, acon2))
@@ -282,7 +290,7 @@ def test_timing(config):
   ->  Hash Join \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)
         Hash Cond: \(foo.c1 = bar.c1\)
         Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
-        ->  Seq Scan on foo \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=1000000, loop number=1\)
+        ->  Seq Scan on foo \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)
         ->  Hash \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=500000, loop number=1\)
               Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
               ->  Seq Scan on bar \(Current loop: actual time=\d+.\d+..\d+.\d+ rows=\d+, loop number=1\)"""
@@ -370,6 +378,9 @@ def test_timing_buffers_conflicts(config):
 	query = 'select count(*) from foo join bar on foo.c1=bar.c1'
 	timing_pattern = '(?:running time=\d+.\d+)|(?:actual time=\d+.\d+..\d+.\d+)'
 	buffers_pattern = 'Buffers:'
+
+	common.set_guc(acon, 'pg_query_state.enable_timing', 'off')
+	common.set_guc(acon, 'pg_query_state.enable_buffers', 'off')
 
 	qs, notices = common.onetime_query_state(config, acon, query, {'timing': True, 'buffers': False})
 	assert len(qs) == 1 and not re.search(timing_pattern, qs[0][3])

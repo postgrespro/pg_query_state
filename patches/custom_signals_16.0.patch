@@ -1,11 +1,19 @@
 diff --git a/src/backend/storage/ipc/procsignal.c b/src/backend/storage/ipc/procsignal.c
-index defb75a..4245d28 100644
+index c85cb5cc18..37ae4b3759 100644
 --- a/src/backend/storage/ipc/procsignal.c
 +++ b/src/backend/storage/ipc/procsignal.c
-@@ -96,6 +96,13 @@ typedef struct
+@@ -6,6 +6,7 @@
+  *
+  * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+  * Portions Copyright (c) 1994, Regents of the University of California
++ * Portions Copyright (c) 2024, Postgres Professional
+  *
+  * IDENTIFICATION
+  *	  src/backend/storage/ipc/procsignal.c
+@@ -97,6 +98,13 @@ typedef struct
  #define BARRIER_CLEAR_BIT(flags, type) \
  	((flags) &= ~(((uint32) 1) << (uint32) (type)))
-
+ 
 +#define IsCustomProcSignalReason(reason) \
 +	((reason) >= PROCSIG_CUSTOM_1 && (reason) <= PROCSIG_CUSTOM_N)
 +
@@ -15,20 +23,20 @@ index defb75a..4245d28 100644
 +
  static ProcSignalHeader *ProcSignal = NULL;
  static ProcSignalSlot *MyProcSignalSlot = NULL;
-
-@@ -103,6 +110,8 @@ static bool CheckProcSignal(ProcSignalReason reason);
+ 
+@@ -104,6 +112,8 @@ static bool CheckProcSignal(ProcSignalReason reason);
  static void CleanupProcSignalState(int status, Datum arg);
  static void ResetProcSignalBarrierBits(uint32 flags);
-
+ 
 +static void CheckAndSetCustomSignalInterrupts(void);
 +
  /*
   * ProcSignalShmemSize
   *		Compute space needed for ProcSignal's shared memory
-@@ -246,6 +255,36 @@ CleanupProcSignalState(int status, Datum arg)
+@@ -247,6 +257,36 @@ CleanupProcSignalState(int status, Datum arg)
  	slot->pss_pid = 0;
  }
-
+ 
 +/*
 + * RegisterCustomProcSignalHandler
 + *		Assign specific handler of custom process signal with new
@@ -62,7 +70,7 @@ index defb75a..4245d28 100644
  /*
   * SendProcSignal
   *		Send a signal to a Postgres process
-@@ -675,7 +714,72 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
+@@ -682,7 +722,72 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
  	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
  		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
  
@@ -135,12 +143,11 @@ index defb75a..4245d28 100644
 +
 +	RESUME_INTERRUPTS();
 +}
-+
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 8cea10c..dd77c98 100644
+index 36cc99ec9c..a3acce427a 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -3402,6 +3402,8 @@ ProcessInterrupts(void)
+@@ -3442,6 +3442,8 @@ ProcessInterrupts(void)
  	if (ParallelMessagePending)
  		HandleParallelMessages();
  
@@ -148,12 +155,20 @@ index 8cea10c..dd77c98 100644
 +
  	if (LogMemoryContextPending)
  		ProcessLogMemoryContextInterrupt();
- }
+ 
 diff --git a/src/include/storage/procsignal.h b/src/include/storage/procsignal.h
-index eec186b..74af186 100644
+index 2f52100b00..0e31a5771e 100644
 --- a/src/include/storage/procsignal.h
 +++ b/src/include/storage/procsignal.h
-@@ -17,6 +17,8 @@
+@@ -6,6 +6,7 @@
+  *
+  * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+  * Portions Copyright (c) 1994, Regents of the University of California
++ * Portions Copyright (c) 2024, Postgres Professional
+  *
+  * src/include/storage/procsignal.h
+  *
+@@ -17,6 +18,8 @@
  #include "storage/backendid.h"
  
  
@@ -162,7 +177,7 @@ index eec186b..74af186 100644
  /*
   * Reasons for signaling a Postgres child process (a backend or an auxiliary
   * process, like checkpointer).  We can cope with concurrent signals for different
-@@ -29,6 +31,8 @@
+@@ -29,6 +32,8 @@
   */
  typedef enum
  {
@@ -171,7 +186,7 @@ index eec186b..74af186 100644
  	PROCSIG_CATCHUP_INTERRUPT,	/* sinval catchup interrupt */
  	PROCSIG_NOTIFY_INTERRUPT,	/* listen/notify interrupt */
  	PROCSIG_PARALLEL_MESSAGE,	/* message from cooperating parallel backend */
-@@ -44,6 +48,14 @@ typedef enum
+@@ -46,6 +51,14 @@ typedef enum
  	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
  	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
  
@@ -186,17 +201,17 @@ index eec186b..74af186 100644
  	NUM_PROCSIGNALS				/* Must be last! */
  } ProcSignalReason;
  
-@@ -51,6 +63,9 @@ typedef enum
- {
+@@ -54,6 +67,9 @@ typedef enum
  	PROCSIGNAL_BARRIER_SMGRRELEASE	/* ask smgr to close files */
  } ProcSignalBarrierType;
-+
+ 
 +/* Handler of custom process signal */
 +typedef void (*ProcSignalHandler_type) (void);
- 
++
  /*
   * prototypes for functions in procsignal.c
-@@ -59,12 +74,15 @@ extern Size ProcSignalShmemSize(void);
+  */
+@@ -61,12 +77,15 @@ extern Size ProcSignalShmemSize(void);
  extern void ProcSignalShmemInit(void);
  
  extern void ProcSignalInit(int pss_idx);
@@ -212,6 +227,3 @@ index eec186b..74af186 100644
  
  extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
  
--- 
-2.25.1
-

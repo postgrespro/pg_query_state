@@ -15,12 +15,25 @@ Using this module there can help in the following things:
  - overwatch the query execution
 
 ## Installation
-To install `pg_query_state`, please apply corresponding patches `custom_signal_(PG_VERSION).patch` and `runtime_explain_(PG_VERSION).patch` (or `runtime_explain.patch` for PG version <= 10.0) in `patches/` directory to reqired stable version of PostgreSQL and rebuild PostgreSQL.
+To install `pg_query_state`, please apply corresponding patches `custom_signal_(PG_VERSION).patch` and `runtime_explain_(PG_VERSION).patch` (or `runtime_explain.patch` for PG version <= 10.0) from the `patches/` directory to reqired stable version of PostgreSQL and rebuild PostgreSQL.
+
+To do this, run the following commands from the postgresql directory:
+```
+patch -p1 < path_to_pg_query_state_folder/patches/runtime_explain_(PG_VERSION).patch
+patch -p1 < path_to_pg_query_state_folder/patches/custom_signal_(PG_VERSION).patch
+```
 
 Then execute this in the module's directory:
 ```
 make install USE_PGXS=1
 ```
+To execute the command correctly, make sure you have the PATH or PG_CONFIG variable set.
+```
+export PATH=path_to_your_bin_folder:$PATH
+# or
+export PG_CONFIG=path_to_your_bin_folder/pg_config
+```
+
 Add module name to the `shared_preload_libraries` parameter in `postgresql.conf`:
 ```
 shared_preload_libraries = 'pg_query_state'

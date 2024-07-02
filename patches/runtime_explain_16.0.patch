@@ -1,8 +1,8 @@
 diff --git a/src/backend/commands/explain.c b/src/backend/commands/explain.c
-index 10644dfac4..7106ed4257 100644
+index 6c2e5c8a4f..74be3944d1 100644
 --- a/src/backend/commands/explain.c
 +++ b/src/backend/commands/explain.c
-@@ -990,14 +990,36 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -1023,14 +1023,36 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  		char	   *relname;
  		char	   *conname = NULL;
  
@@ -40,7 +40,7 @@ index 10644dfac4..7106ed4257 100644
  			continue;
  
  		ExplainOpenGroup("Trigger", NULL, true, es);
-@@ -1023,9 +1045,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -1056,9 +1078,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				appendStringInfo(es->str, " on %s", relname);
  			if (es->timing)
  				appendStringInfo(es->str, ": time=%.3f calls=%.0f\n",
@@ -52,7 +52,7 @@ index 10644dfac4..7106ed4257 100644
  		}
  		else
  		{
-@@ -1034,9 +1056,8 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
+@@ -1067,9 +1089,8 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
  				ExplainPropertyText("Constraint Name", conname, es);
  			ExplainPropertyText("Relation", relname, es);
  			if (es->timing)
@@ -64,7 +64,7 @@ index 10644dfac4..7106ed4257 100644
  		}
  
  		if (conname)
-@@ -1609,8 +1630,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1645,8 +1666,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
  	 * instrumentation results the user didn't ask for.  But we do the
  	 * InstrEndLoop call anyway, if possible, to reduce the number of cases
  	 * auto_explain has to contend with.
@@ -77,7 +77,7 @@ index 10644dfac4..7106ed4257 100644
  		InstrEndLoop(planstate->instrument);
  
  	if (es->analyze &&
-@@ -1645,7 +1669,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1681,7 +1705,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
  			ExplainPropertyFloat("Actual Loops", NULL, nloops, 0, es);
  		}
  	}
@@ -86,7 +86,7 @@ index 10644dfac4..7106ed4257 100644
  	{
  		if (es->format == EXPLAIN_FORMAT_TEXT)
  			appendStringInfoString(es->str, " (never executed)");
-@@ -1661,6 +1685,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -1697,6 +1721,75 @@ ExplainNode(PlanState *planstate, List *ancestors,
  		}
  	}
  
@@ -162,7 +162,7 @@ index 10644dfac4..7106ed4257 100644
  	/* in text format, first line ends here */
  	if (es->format == EXPLAIN_FORMAT_TEXT)
  		appendStringInfoChar(es->str, '\n');
-@@ -2068,6 +2161,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
+@@ -2104,6 +2197,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
  
  	/* Prepare per-worker buffer/WAL usage */
  	if (es->workers_state && (es->buffers || es->wal) && es->verbose)
@@ -172,7 +172,7 @@ index 10644dfac4..7106ed4257 100644
  	{
  		WorkerInstrumentation *w = planstate->worker_instrument;
  
-@@ -3032,6 +3128,11 @@ show_hash_info(HashState *hashstate, ExplainState *es)
+@@ -3068,6 +3164,11 @@ show_hash_info(HashState *hashstate, ExplainState *es)
  		memcpy(&hinstrument, hashstate->hinstrument,
  			   sizeof(HashInstrumentation));
  
@@ -184,7 +184,7 @@ index 10644dfac4..7106ed4257 100644
  	/*
  	 * Merge results from workers.  In the parallel-oblivious case, the
  	 * results from all participants should be identical, except where
-@@ -3412,20 +3513,16 @@ show_instrumentation_count(const char *qlabel, int which,
+@@ -3447,20 +3548,16 @@ show_instrumentation_count(const char *qlabel, int which,
  	if (!es->analyze || !planstate->instrument)
  		return;
  
@@ -209,7 +209,7 @@ index 10644dfac4..7106ed4257 100644
  }
  
  /*
-@@ -4028,15 +4125,27 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
+@@ -4060,15 +4157,27 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  			double		insert_path;
  			double		other_path;
  
@@ -244,18 +244,15 @@ index 10644dfac4..7106ed4257 100644
  								 other_path, 0, es);
  		}
 diff --git a/src/include/commands/explain.h b/src/include/commands/explain.h
-index e94d9e49cf..6a157b8bc0 100644
+index 3d3e632a0c..3eb7bf345d 100644
 --- a/src/include/commands/explain.h
 +++ b/src/include/commands/explain.h
-@@ -47,6 +47,8 @@ typedef struct ExplainState
- 	bool		summary;		/* print total planning and execution timing */
+@@ -48,6 +48,8 @@ typedef struct ExplainState
  	bool		settings;		/* print modified settings */
+ 	bool		generic;		/* generate a generic plan */
  	ExplainFormat format;		/* output format */
 +	bool		runtime;		/* print intermediate state of query execution,
 +								   not after completion */
  	/* state for output formatting --- not reset for each new plan tree */
  	int			indent;			/* current indentation level */
  	List	   *grouping_stack; /* format-specific grouping state */
--- 
-2.25.1
-
