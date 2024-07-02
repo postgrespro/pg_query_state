@@ -1280,24 +1280,20 @@ CountProgress(char *plan_text)
 				{
 					if ((rows = strstr(node, "Rows Removed by Filter")) != NULL)
 					{
+						node_amount++;
+						rows = (char *) (rows + strlen("Rows Removed by Filter\": ") * sizeof(char));
+
 						/*
 						 * Filter node have 2 conditions:
 						 * 1)  Was not filtered (current progress = 0)
 						 * 2)  Was filtered (current progress = 1)
 						 */
-						node_amount++;
-						plan_rows = 1;
-						rows = (char *) (rows + strlen("Rows Removed by Filter\": ") * sizeof(char));
-						if (rows[0] == '0')
-							actual_rows = 0;
-						else
-							actual_rows = 1;
-					} else if ((rows = strstr(node, "\"Actual Rows\": ")) != NULL)
+						if (rows[0] != '0')
+							progress += 1;
+					}
+					else if ((rows = strstr(node, "\"Actual Rows\": ")) != NULL)
 					{
 						node_amount++;
-						actual_rows = 0;
-						plan_rows = 0;
-
 						rows = (char *) (rows + strlen("\"Actual Rows\": ") * sizeof(char));
 						len = strstr(rows, "\n") - rows;
 						if ((strstr(rows, ",") - rows) < len)
