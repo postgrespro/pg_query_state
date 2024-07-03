@@ -1375,9 +1375,9 @@ GetCurrentNumericState(shm_mq_msg *msg)
 	return CountProgress(plan_text);
 }
 
-PG_FUNCTION_INFO_V1(progress_bar);
+PG_FUNCTION_INFO_V1(pg_progress_bar);
 Datum
-progress_bar(PG_FUNCTION_ARGS)
+pg_progress_bar(PG_FUNCTION_ARGS)
 {
 	pid_t			pid = PG_GETARG_INT32(0);
 	int				delay = 0;
@@ -1392,7 +1392,7 @@ progress_bar(PG_FUNCTION_ARGS)
 	if (PG_NARGS() == 2)
 	{
 		/*
-		 * This is continuous mode, function 'progress_bar_visual',
+		 * This is continuous mode, function 'pg_progress_bar_visual',
 		 * we need to get delay value.
 		 */
 		delay = PG_GETARG_INT32(1);

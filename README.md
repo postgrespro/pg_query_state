@@ -324,7 +324,7 @@ Alexey Kondratov <a.kondratov@postgrespro.ru> Postgres Professional Ltd., Russia
 
 ## Function progress\_bar
 ```plpgsql
-progress_bar(
+pg_progress_bar(
         integer     pid
 ) returns FLOAT
 ```
@@ -332,7 +332,7 @@ extracts the current query state from backend with specified 'pid'. Then gets th
 
 ## Function progress\_bar\_visual
 ```plpgsql
-progress_bar(
+pg_progress_bar_visual(
         integer     pid,
         integer     delay
 ) returns VOID
@@ -354,15 +354,15 @@ postgres=# SELECT pid FROM pg_stat_activity where query like 'insert%';
  23877
 (1 row)
 
-postgres=# SELECT progress_bar(23877);
- progress_bar
---------------
-    0.6087927
+postgres=# SELECT pg_progress_bar(23877);
+ pg_progress_bar
+-----------------
+       0.6087927
 (1 row)
 ```
 Or continuous version:
 ```sql
-postgres=# SELECT progress_bar_visual(23877, 1);
+postgres=# SELECT pg_progress_bar_visual(23877, 1);
 Progress = 0.043510
 Progress = 0.085242
 Progress = 0.124921
@@ -389,9 +389,9 @@ Progress = 0.911858
 Progress = 0.956362
 Progress = 0.995097
 Progress = 1.000000
- progress_bar_visual
----------------------
-                   1
+ pg_progress_bar_visual
+------------------------
+                      1
 (1 row)
 ```
 Also uncountable queries exist. Assume first backend executes some function:
@@ -406,18 +406,18 @@ postgres=# SELECT pid FROM pg_stat_activity where query like 'delete%';
  23877
 (1 row)
 
-postgres=# SELECT progress_bar(23877);
+postgres=# SELECT pg_progress_bar(23877);
 INFO:  Counting Progress doesn't available
- progress_bar
---------------
-           -1
+ pg_progress_bar
+-----------------
+              -1
 (1 row)
 
-postgres=# SELECT progress_bar_visual(23877, 5);
+postgres=# SELECT pg_progress_bar_visual(23877, 5);
 INFO:  Counting Progress doesn't available
- progress_bar_visual
----------------------
-                   -1
+ pg_progress_bar_visual
+------------------------
+                      -1
 (1 row)
 ```
 

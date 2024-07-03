@@ -399,7 +399,7 @@ def test_timing_buffers_conflicts(config):
 	common.n_close((acon,))
 
 def test_progress_bar(config):
-	"""test progress_bar of simple query"""
+	"""test pg_progress_bar of simple query"""
 
 	acon, = common.n_async_connect(config)
 	query = 'select * from foo join bar on foo.c1=bar.c1'

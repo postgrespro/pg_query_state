@@ -1,7 +1,7 @@
 # pg_query_state/t/test_bad_progress_bar.pl
 #
-# Check uncorrect launches of functions progress_bar(pid)
-# and progress_bar_visual(pid, delay)
+# Check uncorrect launches of functions pg_progress_bar(pid)
+# and pg_progress_bar_visual(pid, delay)
 
 use strict;
 use warnings;
@@ -23,7 +23,7 @@ my $dbdpg_rc = eval
   1;
 };
 
-# start backend for function progress_bar
+# start backend for function pg_progress_bar
 my $node = PostgresNode->get_new_node('master');
 $node->init;
 $node->start;
@@ -33,10 +33,10 @@ $node->psql('postgres', 'CREATE EXTENSION pg_query_state;');
 
 subtest 'Extracting from bad pid' => sub {
         my $stderr;
-        $node->psql('postgres', 'SELECT * from progress_bar(-1)', stderr => \$stderr);
-        is ($stderr, 'psql:<stdin>:1: ERROR:  backend with pid=-1 not found', "appealing to a bad pid for progress_bar");
-        $node->psql('postgres', 'SELECT * from progress_bar(-1)_visual', stderr => \$stderr);
-        is ($stderr, 'psql:<stdin>:1: ERROR:  backend with pid=-1 not found', "appealing to a bad pid for progress_bar_visual");
+        $node->psql('postgres', 'SELECT * from pg_progress_bar(-1)', stderr => \$stderr);
+        is ($stderr, 'psql:<stdin>:1: ERROR:  backend with pid=-1 not found', "appealing to a bad pid for pg_progress_bar");
+        $node->psql('postgres', 'SELECT * from pg_progress_bar(-1)_visual', stderr => \$stderr);
+        is ($stderr, 'psql:<stdin>:1: ERROR:  backend with pid=-1 not found', "appealing to a bad pid for pg_progress_bar_visual");
 };
 
 if ( not $dbdpg_rc) {
@@ -49,16 +49,16 @@ SKIP: {
         my $dbh_status = DBI->connect('DBI:Pg:' . $node->connstr($_));
         if ( !defined $dbh_status )
         {
-                die "Cannot connect to database for dbh with progress_bar\n";
+                die "Cannot connect to database for dbh with pg_progress_bar\n";
         }
 
         my $pid_status = $dbh_status->{pg_pid};
 
         subtest 'Extracting your own status' => sub {
-                $dbh_status->do('SELECT * from progress_bar(' . $pid_status . ')');
-                is($dbh_status->errstr, 'ERROR:  attempt to extract state of current process', "extracting the state of the process itself for progress_bar");
-                $dbh_status->do('SELECT * from progress_bar_visual(' . $pid_status . ')');
-                is($dbh_status->errstr, 'ERROR:  attempt to extract state of current process', "extracting the state of the process itself for progress_bar_visual");
+                $dbh_status->do('SELECT * from pg_progress_bar(' . $pid_status . ')');
+                is($dbh_status->errstr, 'ERROR:  attempt to extract state of current process', "extracting the state of the process itself for pg_progress_bar");
+                $dbh_status->do('SELECT * from pg_progress_bar_visual(' . $pid_status . ')');
+                is($dbh_status->errstr, 'ERROR:  attempt to extract state of current process', "extracting the state of the process itself for pg_progress_bar_visual");
         };
 
         $dbh_status->disconnect;

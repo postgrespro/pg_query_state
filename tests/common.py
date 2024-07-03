@@ -165,7 +165,7 @@ def progress_bar(config, pid):
 	conn = psycopg2.connect(**config)
 	curs = conn.cursor()
 
-	curs.callproc('progress_bar', (pid,))
+	curs.callproc('pg_progress_bar', (pid,))
 	result = curs.fetchall()
 	notices = conn.notices[:]
 	conn.close()
