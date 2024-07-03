@@ -68,6 +68,7 @@ tests = [
 	test_formats,
 	test_timing_buffers_conflicts,
 	test_insert_on_conflict,
+	test_progress_bar,
 ]
 
 def setup(con):

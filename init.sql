@@ -15,3 +15,14 @@ CREATE FUNCTION pg_query_state(pid 		integer
 				 , leader_pid integer)
 	AS 'MODULE_PATHNAME'
 	LANGUAGE C STRICT VOLATILE;
+
+CREATE FUNCTION progress_bar(pid integer)
+	RETURNS FLOAT
+	AS 'MODULE_PATHNAME'
+	LANGUAGE C STRICT VOLATILE;
+
+CREATE FUNCTION progress_bar_visual(pid		integer
+								  , delay	integer = 1)
+	RETURNS FLOAT
+	AS 'MODULE_PATHNAME', 'progress_bar'
+	LANGUAGE C STRICT VOLATILE;
