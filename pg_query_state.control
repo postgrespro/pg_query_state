@@ -1,5 +1,5 @@
 # pg_query_state extension
 comment = 'tool for inspection query progress'
-default_version = '1.1'
+default_version = '1.2'
 module_pathname = '$libdir/pg_query_state'
 relocatable = true

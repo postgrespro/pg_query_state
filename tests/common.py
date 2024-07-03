@@ -161,6 +161,54 @@ def onetime_query_state(config, async_conn, query, args={}, num_workers=0):
 	set_guc(async_conn, 'enable_mergejoin', 'on')
 	return result, notices
 
+def progress_bar(config, pid):
+	conn = psycopg2.connect(**config)
+	curs = conn.cursor()
+
+	curs.callproc('pg_progress_bar', (pid,))
+	result = curs.fetchall()
+	notices = conn.notices[:]
+	conn.close()
+
+	return result, notices
+
+def onetime_progress_bar(config, async_conn, query, args={}, num_workers=0):
+	"""
+	Get intermediate state of 'query' on connection 'async_conn' after number of 'steps'
+	of node executions from start of query
+	"""
+
+	acurs = async_conn.cursor()
+
+	set_guc(async_conn, 'enable_mergejoin', 'off')
+	set_guc(async_conn, 'max_parallel_workers_per_gather', num_workers)
+	acurs.execute(query)
+
+	# extract progress of current query
+	MAX_PG_QS_RETRIES = 10
+	DELAY_BETWEEN_RETRIES = 0.1
+	pg_qs_args = {
+			'config': config,
+			'pid': async_conn.get_backend_pid(),
+			}
+	for k, v in args.items():
+		pg_qs_args[k] = v
+	n_retries = 0
+	while True:
+		result, notices = progress_bar(**pg_qs_args)
+		n_retries += 1
+		if len(result) > 0:
+			break
+		if n_retries >= MAX_PG_QS_RETRIES:
+			# pg_query_state callings don't return any result, more likely run
+			# query has completed
+			break
+		time.sleep(DELAY_BETWEEN_RETRIES)
+	wait(async_conn)
+
+	set_guc(async_conn, 'enable_mergejoin', 'on')
+	return result, notices
+
 def set_guc(async_conn, param, value):
 	acurs = async_conn.cursor()
 	acurs.execute('set %s to %s' % (param, value))
