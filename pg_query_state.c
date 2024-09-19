@@ -101,8 +101,8 @@ static List *GetRemoteBackendQueryStates(PGPROC *leader,
 										 ExplainFormat format);
 
 /* Shared memory variables */
-shm_toc			   *toc = NULL;
-RemoteUserIdResult *counterpart_userid = NULL;
+static shm_toc			   *toc = NULL;
+static RemoteUserIdResult *counterpart_userid = NULL;
 pg_qs_params   	   *params = NULL;
 shm_mq 			   *mq = NULL;
 
