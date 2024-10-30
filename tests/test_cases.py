@@ -119,6 +119,17 @@ def test_nested_call(config):
                       Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
                       ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
 
+	expected_nested_2 = r"""Result \(Current loop: actual rows=0, loop number=1\)
+  InitPlan 1
+    ->  Aggregate \(Current loop: actual rows=0, loop number=1\)
+          ->  Hash Join \(Current loop: actual rows=\d+, loop number=1\)
+                Hash Cond: \(foo.c1 = bar.c1\)
+                Join Filter: \(unlock_if_eq_1\(foo.c1\) = bar.c1\)
+                ->  Seq Scan on foo \(Current loop: actual rows=\d+, loop number=1\)
+                ->  Hash \(Current loop: actual rows=500000, loop number=1\)
+                      Buckets: \d+  Batches: \d+  Memory Usage: \d+kB
+                      ->  Seq Scan on bar \(Current loop: actual rows=\d+, loop number=1\)"""
+
 
 	util_curs.execute(create_function)
 	util_conn.commit()
@@ -136,7 +147,7 @@ def test_nested_call(config):
 	assert qs[0][2] == call_function
 	assert qs[0][3] == expected
 	assert qs[1][2] == nested_query1 or qs[1][2] == nested_query2
-	assert re.match(expected_nested, qs[1][3])
+	assert re.match(expected_nested, qs[1][3]) or re.match(expected_nested_2, qs[1][3])
 	assert qs[0][4] == qs[1][4] == None
 	assert len(notices) == 0
 
