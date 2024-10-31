@@ -4,8 +4,9 @@
 MODULE_big = pg_query_state
 OBJS = pg_query_state.o signal_handler.o $(WIN32RES)
 EXTENSION = pg_query_state
-EXTVERSION = 1.1
-DATA = pg_query_state--1.0--1.1.sql
+EXTVERSION = 1.2
+DATA = pg_query_state--1.0--1.1.sql \
+	   pg_query_state--1.1--1.2.sql
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 
