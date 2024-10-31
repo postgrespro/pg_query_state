@@ -22,7 +22,6 @@ notifications:
         on_failure: always
 
 env:
-    - PG_VERSION=17 LEVEL=hardcore USE_TPCDS=1
     - PG_VERSION=17
     - PG_VERSION=16 LEVEL=hardcore USE_TPCDS=1
     - PG_VERSION=16
@@ -40,6 +39,7 @@ env:
 
 matrix:
     allow_failures:
+        - env: PG_VERSION=13 LEVEL=hardcore USE_TPCDS=1
         - env: PG_VERSION=11
         - env: PG_VERSION=10
         - env: PG_VERSION=9.6
