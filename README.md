@@ -20,7 +20,7 @@ To install `pg_query_state`, please apply corresponding patches `custom_signal_(
 To do this, run the following commands from the postgresql directory:
 ```
 patch -p1 < path_to_pg_query_state_folder/patches/runtime_explain_(PG_VERSION).patch
-patch -p1 < path_to_pg_query_state_folder/patches/custom_signal_(PG_VERSION).patch
+patch -p1 < path_to_pg_query_state_folder/patches/custom_signals_(PG_VERSION).patch
 ```
 
 Then execute this in the module's directory:
