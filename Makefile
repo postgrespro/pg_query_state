@@ -14,6 +14,7 @@ EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
 	Dockerfile ./tests/*.pyc ./tmp_stress
 
 ISOLATION = corner_cases
+TAP_TESTS = 1
 #
 # PG11 doesn't support ISOLATION_OPTS variable. We have to use
 # "CREATE/DROP EXTENTION" command in spec.
