@@ -63,6 +63,7 @@ if [ "$LEVEL" = "hardcore" ] || \
 	./configure \
 		CFLAGS='-Og -ggdb3 -fno-omit-frame-pointer' \
 		--enable-cassert \
+		--enable-tap-tests \
 		--prefix=$CUSTOM_PG_BIN \
 		--quiet
 else
@@ -145,6 +146,11 @@ make installcheck || status=$?
 
 # show diff if it exists
 if [ -f regression.diffs ]; then cat regression.diffs; fi
+
+# run tap-tests
+if [ "$LEVEL" = "hardcore" ]; then
+	make PROVE_TESTS='t/001_bad_progress_bar.pl'
+fi
 
 # run python tests
 set +x -e
