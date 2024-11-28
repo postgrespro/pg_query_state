@@ -1,6 +1,5 @@
 setup
 {
-	CREATE EXTENSION pg_query_state;
 	CREATE ROLE alice;
 	CREATE ROLE bob;
 	CREATE ROLE super SUPERUSER;
@@ -31,7 +30,6 @@ teardown
 	DROP ROLE super;
 	DROP ROLE bob;
 	DROP ROLE alice;
-	DROP EXTENSION pg_query_state;
 }
 
 session "s1"
