@@ -37,6 +37,9 @@ typedef enum
 } msg_by_parts_result;
 
 static msg_by_parts_result send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data);
+static void append_string_info_by_ptr(StringInfo str, char *add_ptr, char *add_data, int add_data_len);
+static void add_node_count_progress(ExplainState *es);
+static int	get_num_left_spaces(char *actual_rows, StringInfo str);
 
 /*
  *	Get List of stack_frames as a stack of function calls starting from outermost call.
@@ -91,12 +94,212 @@ runtime_explain()
 			es->str->data[es->str->len - 1] = '}';
 		}
 
+		/*
+		 * Adding progress to the node depending on the es->costs parameter
+		 */
+		if (es->costs == true)
+			add_node_count_progress(es);
+
 		qs_frame->plan = es->str->data;
 
 		result = lcons(qs_frame, result);
 	}
 
 	return result;
+}
+
+/*
+ * A structure with tags for parsing in different formats
+ */
+typedef struct
+{
+	char	   *node_tag;
+	char	   *plan_rows_tag;
+	char	   *actual_rows_tag;
+	char	   *current_loop_tag;
+	char	   *add_ptr_tag;
+	char	   *add_str_progress_tag;
+	char	   *add_str_prefix;
+}			parse_tags;
+
+/*
+ * An array of structures with tags for parsing the
+ * pg_query_state message in different formats
+ */
+static parse_tags parse_format[] =
+{
+
+	/* TEXT format */
+	{
+		.node_tag = "->",
+			.plan_rows_tag = "rows=",
+			.actual_rows_tag = "actual rows=",
+			.current_loop_tag = "Current loop:",
+			.add_ptr_tag = ")",
+			.add_str_progress_tag = "Progress: %d%%",
+			.add_str_prefix = ","
+	},
+
+	/* XML format */
+	{
+		.node_tag = "<Plan>",
+			.plan_rows_tag = "<Plan-Rows>",
+			.actual_rows_tag = "<Actual-Rows>",
+			.current_loop_tag = "<Current-loop>",
+			.add_ptr_tag = ">",
+			.add_str_progress_tag = "<Progress>%d%%</Progress",
+			.add_str_prefix = ">\n"
+	},
+
+	/* JSON format */
+	{
+		.node_tag = "\"Node Type\":",
+			.plan_rows_tag = "\"Plan Rows\":",
+			.actual_rows_tag = "\"Actual Rows\":",
+			.current_loop_tag = "\"Current loop\":",
+			.add_ptr_tag = "\n",
+			.add_str_progress_tag = "\"Progress\": %d%%",
+			.add_str_prefix = ",\n"
+	},
+
+	/* YAML format */
+	{
+		.node_tag = "Node Type:",
+			.plan_rows_tag = "Plan Rows:",
+			.actual_rows_tag = "Actual Rows:",
+			.current_loop_tag = "Current loop:",
+			.add_ptr_tag = "\n",
+			.add_str_progress_tag = "Progress: %d%%",
+			.add_str_prefix = "\n"
+	}
+};
+
+/*
+ * The function adds Progress to the pg_query_state message
+ */
+static void
+add_node_count_progress(ExplainState *es)
+{
+	char	   *node;			/* Part of plan with information about single
+								 * node */
+	char	   *plan_rows;		/* Pointer to plan rows */
+	char	   *actual_rows;	/* Pointer to actual rows */
+	char	   *current_loop;	/* Pointer to current loop */
+	char	   *actual_rows_old;	/* Pointer to the actual rows before the
+									 * offset */
+	char	   *add_ptr;		/* Pointer to the place where the progress
+								 * line will be added */
+	char		add_str[BUF_SIZE_PROGRESS]; /* Buffer for forming the added
+											 * string with progress */
+	double		plan_rows_d;	/* Plan rows in double format */
+	double		actual_rows_d;	/* Actual rows in double format */
+	int			progress = 0;	/* Progress in int format */
+	int			len;			/* Auxiliary variable for length */
+	parse_tags *form;			/* Pointer to the parse_tags structure */
+
+	/* Checking that the format has not changed */
+	Assert(es->format < 4);
+
+	/* Get the value of the pointer depending on the format */
+	form = &(parse_format[es->format]);
+
+	/* Search for the node for which progress is being added */
+	node = strstr(es->str->data, form->node_tag);
+
+	/* Parsing the node */
+	while (node != NULL)
+	{
+		if ((current_loop = strstr(node, form->current_loop_tag)) != NULL &&
+			(plan_rows = strstr(node, form->plan_rows_tag)) != NULL &&
+			(actual_rows = strstr(current_loop, form->actual_rows_tag)) != NULL)
+		{
+			/* Storing the pointer to the actual rows before the offset */
+			actual_rows_old = actual_rows;
+
+			/* Getting the value of plan rows */
+			plan_rows = (char *) (plan_rows + strlen(form->plan_rows_tag) * sizeof(char));
+			plan_rows_d = atof(plan_rows);
+
+			/* Getting the value of actual rows */
+			actual_rows = (char *) (actual_rows + strlen(form->actual_rows_tag) * sizeof(char));
+			actual_rows_d = atof(actual_rows);
+
+			/* It cannot be divided by 0 */
+			if (plan_rows_d == 0)
+				return;
+
+			/* Calculating the progress value */
+			if (plan_rows_d > actual_rows_d)
+				progress = (actual_rows_d * 100) / plan_rows_d;
+			else
+				progress = 100;
+
+			/*
+			 * Search for a place to add progress, if there is no such place,
+			 * then the progress is added to the end of the line
+			 */
+			if ((add_ptr = strstr(actual_rows, form->add_ptr_tag)) == NULL)
+				add_ptr = actual_rows + strlen(actual_rows);
+
+			/* Checking that the maximum lenght row cannot overflow the buffer */
+			Assert(strlen(parse_format[EXPLAIN_FORMAT_XML].add_str_progress_tag)
+				   + 1 < BUF_SIZE_PROGRESS);
+
+			/* Forming a line with the progress and add it */
+			sprintf(add_str, form->add_str_progress_tag, progress);
+			len = strlen(add_str);
+			append_string_info_by_ptr(es->str, add_ptr, add_str, len);
+
+			/*
+			 * Adding an indent, that is important for JSON, YAML, and XML
+			 * formats
+			 */
+			len = get_num_left_spaces(actual_rows_old, es->str);
+			append_string_info_by_ptr(es->str, add_ptr, actual_rows_old - len, len);
+
+			/* Adding a prefix */
+			len = strlen(form->add_str_prefix);
+			append_string_info_by_ptr(es->str, add_ptr, form->add_str_prefix, len);
+		}
+
+		/* Moving on to the next node */
+		node = strstr(node + 1, form->node_tag);
+	}
+}
+
+/*
+ * The function returns the number of spaces
+ * to the left of the passed pointer
+ */
+static int
+get_num_left_spaces(char *passed_ptr, StringInfo str)
+{
+	char	   *ptr = passed_ptr - 1;
+
+	while ((*ptr == ' ' || *ptr == '\t') && ptr > str->data)
+		ptr--;
+
+	return (passed_ptr - ptr - 1);
+}
+
+/*
+ * The function adds a string to the
+ * StringInfo structure by pointer
+ */
+static void
+append_string_info_by_ptr(StringInfo str, char *add_ptr, char *add_data, int add_data_len)
+{
+	/*
+	 * Increasing the size of the StringInfo structure to add new information
+	 * there
+	 */
+	enlargeStringInfo(str, add_data_len);
+
+	/* Shifting the data in order to add a new line */
+	memmove(add_ptr + add_data_len, add_ptr, strlen(add_ptr) + 1);
+
+	/* Adding a line */
+	memcpy(add_ptr, add_data, add_data_len);
 }
 
 /*

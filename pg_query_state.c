@@ -63,11 +63,11 @@ static shm_mq_result receive_msg_by_parts(shm_mq_handle *mqh, Size *total,
 											 void **datap, int64 timeout, int *rc, bool nowait);
 
 /* Global variables */
-List 					*QueryDescStack = NIL;
+List					*QueryDescStack = NIL;
 static ProcSignalReason UserIdPollReason = INVALID_PROCSIGNAL;
 static ProcSignalReason QueryStatePollReason = INVALID_PROCSIGNAL;
 static ProcSignalReason WorkerPollReason = INVALID_PROCSIGNAL;
-static bool 			module_initialized = false;
+static bool			module_initialized = false;
 static const char		*be_state_str[] = {						/* BackendState -> string repr */
 							"undefined",						/* STATE_UNDEFINED */
 							"idle",								/* STATE_IDLE */
@@ -103,8 +103,8 @@ static List *GetRemoteBackendQueryStates(PGPROC *leader,
 /* Shared memory variables */
 shm_toc			   *toc = NULL;
 RemoteUserIdResult *counterpart_userid = NULL;
-pg_qs_params   	   *params = NULL;
-shm_mq 			   *mq = NULL;
+pg_qs_params	   *params = NULL;
+shm_mq			   *mq = NULL;
 
 /*
  * Estimate amount of shared memory needed.
@@ -1246,4 +1246,260 @@ DetachPeer(void)
 	if (n_peers <= 0)
 		ereport(LOG, (errcode(ERRCODE_INTERNAL_ERROR),
 					  errmsg("pg_query_state peer is not responding")));
+}
+
+/*
+ *  Count progress of query execution  like ratio of
+ *  number of received to planned rows in persent.
+ *  Changes of this function can lead to more plausible results.
+ */
+static double
+CountProgress(char *plan_text)
+{
+	char	*plan;				/* Copy of plan_text */
+	char	*node;				/* Part of plan with information about single node */
+	char	*rows;				/* Pointer to rows */
+	char	*actual_rows_str;	/* Actual rows in string format */
+	char	*plan_rows_str;		/* Planned rows in string format */
+	int		len;				/* Length of rows in string format */
+	double	actual_rows;		/* Actual rows */
+	double	plan_rows;			/* Planned rows */
+	double	progress = 0;		/* Summary progress on nodes */
+	int		node_amount = 0;	/* Amount of plantree nodes using in counting progress */
+
+	plan = palloc(sizeof(char) * (strlen(plan_text) + 1));
+	strcpy(plan, plan_text);
+	node = strtok(plan, "[");	/* Get information about upper node */
+	while (node != NULL)
+	{
+		if (strstr(node, "Seq Scan") == NULL)
+		{
+			if (strstr(node, "ModifyTable") == NULL)
+			{
+				if (strstr(node, "Result") == NULL)
+				{
+					if ((rows = strstr(node, "Rows Removed by Filter")) != NULL)
+					{
+						node_amount++;
+						rows = (char *) (rows + strlen("Rows Removed by Filter\": ") * sizeof(char));
+
+						/*
+						 * Filter node have 2 conditions:
+						 * 1)  Was not filtered (current progress = 0)
+						 * 2)  Was filtered (current progress = 1)
+						 */
+						if (rows[0] != '0')
+							progress += 1;
+					}
+					else if ((rows = strstr(node, "\"Actual Rows\": ")) != NULL)
+					{
+						node_amount++;
+						rows = (char *) (rows + strlen("\"Actual Rows\": ") * sizeof(char));
+						len = strstr(rows, "\n") - rows;
+						if ((strstr(rows, ",") - rows) < len)
+							len = strstr(rows, ",") - rows;
+						actual_rows_str = palloc(sizeof(char) * (len + 1));
+						actual_rows_str[len] = 0;
+						strncpy(actual_rows_str, rows, len);
+						actual_rows = strtod(actual_rows_str, NULL);
+						pfree(actual_rows_str);
+
+						rows = strstr(node, "\"Plan Rows\": ");
+						rows = (char *) (rows + strlen("\"Plan Rows\": ") * sizeof(char));
+						len = strstr(rows, ",") - rows;
+						plan_rows_str = palloc(sizeof(char) * (len + 1));
+						plan_rows_str[len] = 0;
+						strncpy(plan_rows_str, rows, len);
+						plan_rows = strtod(plan_rows_str, NULL);
+						pfree(plan_rows_str);
+
+						if (plan_rows > actual_rows)
+							progress += actual_rows / plan_rows;
+						else
+							progress += 1;
+					}
+				}
+			}
+		}
+		node = strtok(NULL, "[");
+	}
+
+	pfree(plan);
+	if (node_amount > 0)
+	{
+		progress = progress / node_amount;
+		if (progress == 1)
+			progress = 0.999999;
+	}
+	else
+		return -1;
+	return progress;
+}
+
+static double
+GetCurrentNumericState(shm_mq_msg *msg)
+{
+	typedef struct
+	{
+		PGPROC		*proc;
+		ListCell	*frame_cursor;
+		int			 frame_index;
+		List		*stack;
+	} proc_state;
+
+	/* multicall context type */
+	typedef struct
+	{
+		ListCell	*proc_cursor;
+		List		*procs;
+	} pg_qs_fctx;
+
+	pg_qs_fctx		*fctx;
+	List			*qs_stack;
+	proc_state		*p_state;
+	stack_frame		*frame;
+	char			*plan_text;
+
+	fctx = (pg_qs_fctx *) palloc(sizeof(pg_qs_fctx));
+	fctx->procs = NIL;
+	p_state = (proc_state *) palloc(sizeof(proc_state));
+	qs_stack = deserialize_stack(msg->stack, msg->stack_depth);
+	p_state->proc = msg->proc;
+	p_state->stack = qs_stack;
+	p_state->frame_index = 0;
+	p_state->frame_cursor = list_head(qs_stack);
+	fctx->procs = lappend(fctx->procs, p_state);
+	fctx->proc_cursor = list_head(fctx->procs);
+	frame = (stack_frame *) lfirst(p_state->frame_cursor);
+	plan_text = frame->plan->vl_dat;
+	return CountProgress(plan_text);
+}
+
+PG_FUNCTION_INFO_V1(pg_progress_bar);
+Datum
+pg_progress_bar(PG_FUNCTION_ARGS)
+{
+	pid_t			pid = PG_GETARG_INT32(0);
+	int				delay = 0;
+	PGPROC			*proc;
+	Oid				counterpart_user_id;
+	shm_mq_msg		*msg;
+	List			*bg_worker_procs = NIL;
+	List			*msgs;
+	double			progress;
+	double			old_progress;
+
+	if (PG_NARGS() == 2)
+	{
+		/*
+		 * This is continuous mode, function 'pg_progress_bar_visual',
+		 * we need to get delay value.
+		 */
+		delay = PG_GETARG_INT32(1);
+		if (delay < 1)
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("the value of \"delay\" must be positive integer")));
+	}
+
+	if (!module_initialized)
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("pg_query_state wasn't initialized yet")));
+
+	if (pid == MyProcPid)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("attempt to extract state of current process")));
+
+	proc = BackendPidGetProc(pid);
+	if (!proc ||
+#if PG_VERSION_NUM >= 170000
+		proc->vxid.procNumber == INVALID_PROC_NUMBER ||
+#else
+		proc->backendId == InvalidBackendId ||
+#endif
+		proc->databaseId == InvalidOid ||
+		proc->roleId == InvalidOid)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("backend with pid=%d not found", pid)));
+
+	counterpart_user_id = GetRemoteBackendUserId(proc);
+	if (!(superuser() || GetUserId() == counterpart_user_id))
+		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						errmsg("permission denied")));
+
+	old_progress = 0;
+	progress = 0;
+	if (SRF_IS_FIRSTCALL())
+	{
+		pg_atomic_write_u32(&counterpart_userid->n_peers, 1);
+		params->reqid = ++reqid;
+	}
+
+	bg_worker_procs = GetRemoteBackendWorkers(proc);
+	msgs = GetRemoteBackendQueryStates(proc,
+									   bg_worker_procs,
+									   0, 1, 0, 0, 0,
+									   EXPLAIN_FORMAT_JSON);
+	if (list_length(msgs) == 0)
+		elog(WARNING, "backend does not reply");
+	msg = (shm_mq_msg *) linitial(msgs);
+
+	switch (msg->result_code)
+	{
+		case QUERY_NOT_RUNNING:
+			elog(INFO, "query not runing");
+			PG_RETURN_FLOAT8((float8) -1);
+			break;
+		case STAT_DISABLED:
+			elog(INFO, "query execution statistics disabled");
+			PG_RETURN_FLOAT8((float8) -1);
+		default:
+			break;
+	}
+	if (msg->result_code == QS_RETURNED && delay == 0)
+	{
+		progress = GetCurrentNumericState(msg);
+		if (progress < 0)
+		{
+			elog(INFO, "Counting Progress doesn't available");
+			PG_RETURN_FLOAT8((float8) -1);
+		}
+		else
+			PG_RETURN_FLOAT8((float8) progress);
+	}
+	else if (msg->result_code == QS_RETURNED)
+	{
+		while (msg->result_code == QS_RETURNED)
+		{
+			progress = GetCurrentNumericState(msg);
+			if (progress > old_progress)
+			{
+				elog(INFO, "\rProgress = %f", progress);
+				old_progress = progress;
+			}
+			else if (progress < 0)
+			{
+				elog(INFO, "Counting Progress doesn't available");
+				break;
+			}
+
+			for (int i = 0; i < delay; i++)
+			{
+				pg_usleep(1000000);
+				CHECK_FOR_INTERRUPTS();
+			}
+
+			bg_worker_procs = GetRemoteBackendWorkers(proc);
+			msgs = GetRemoteBackendQueryStates(proc,
+											bg_worker_procs,
+											0, 1, 0, 0, 0,
+											EXPLAIN_FORMAT_JSON);
+			if (list_length(msgs) == 0)
+				elog(WARNING, "backend does not reply");
+			msg = (shm_mq_msg *) linitial(msgs);
+		}
+		if (progress > -1)
+			elog(INFO, "\rProgress = 1.000000");
+		PG_RETURN_FLOAT8((float8) 1);
+	}
+	PG_RETURN_FLOAT8((float8) -1);
 }
