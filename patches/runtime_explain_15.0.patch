@@ -219,10 +219,9 @@ index 10644dfac4..7106ed4257 100644
  
  			/* count the number of source rows */
 -			total = outerPlanState(mtstate)->instrument->ntuples;
--			other_path = mtstate->ps.instrument->ntuples2;
+ 			other_path = mtstate->ps.instrument->ntuples2;
 -			insert_path = total - other_path;
-+			other_path = mtstate->ps.instrument->nfiltered2;
-+
+
 +			/*
 +			 * Insert occurs after extracting row from subplan and in runtime mode
 +			 * we can appear between these two operations - situation when
@@ -237,7 +236,7 @@ index 10644dfac4..7106ed4257 100644
 +				insert_path = total - other_path;
 +				ExplainPropertyFloat("Tuples Inserted", NULL, insert_path, 0, es);
 +			}
- 
++
 -			ExplainPropertyFloat("Tuples Inserted", NULL,
 -								 insert_path, 0, es);
  			ExplainPropertyFloat("Conflicting Tuples", NULL,
