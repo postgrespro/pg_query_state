@@ -23,15 +23,15 @@ notifications:
 
 env:
     - PG_VERSION=17
-    - PG_VERSION=16 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=16 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=16
-    - PG_VERSION=15 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=15 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=15
-    - PG_VERSION=14 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=14 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=14
-    - PG_VERSION=13 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=13 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=13
-    - PG_VERSION=12 LEVEL=hardcore USE_TPCDS=1
+    - PG_VERSION=12 LEVEL=hardcore USE_TPCDS=0
     - PG_VERSION=12
     - PG_VERSION=10
     - PG_VERSION=9.6
