@@ -92,4 +92,12 @@ extern void DetachPeer(void);
 extern void UnlockShmem(LOCKTAG *tag);
 extern void LockShmem(LOCKTAG *tag, uint32 key);
 
+/*
+ * The size of the buffer in which the progress message is generated.
+ * The length of this line is the maximum in XML format when the
+ * progress reaches 100%. If the size of this buffer becomes insufficient,
+ * it will need to be increased (e.g., when adding a new format).
+ */
+#define BUF_SIZE_PROGRESS	30
+
 #endif
