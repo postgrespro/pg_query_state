@@ -51,7 +51,7 @@ void		_PG_init(void);
 
 /* hooks defined in this module */
 static void qs_ExecutorStart(QueryDesc *queryDesc, int eflags);
-#if PG_VERSION_NUM < 100000
+#if PG_VERSION_NUM < 100000 || PG_VERSION_NUM >= 180000
 static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count);
 #else
 static void qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
@@ -296,7 +296,7 @@ qs_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * 		Catch any fatal signals
  */
 static void
-#if PG_VERSION_NUM < 100000
+#if PG_VERSION_NUM < 100000 || PG_VERSION_NUM >= 180000
 qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
 #else
 qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
@@ -308,7 +308,7 @@ qs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
-#if PG_VERSION_NUM < 100000
+#if PG_VERSION_NUM < 100000 || PG_VERSION_NUM >= 180000
 			prev_ExecutorRun(queryDesc, direction, count);
 		else
 			standard_ExecutorRun(queryDesc, direction, count);
