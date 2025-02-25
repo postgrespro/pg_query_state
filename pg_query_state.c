@@ -1249,7 +1249,48 @@ DetachPeer(void)
 }
 
 /*
- *  Count progress of query execution  like ratio of
+ * Extract the number of actual rows and planned rows from
+ * the plan for one node in text format. Returns their ratio,
+ * or 1 if there are already more received than planned.
+ */
+static double
+CountNodeProgress(char *node_text)
+{
+	char	*rows;				/* Pointer to rows */
+	char	*actual_rows_str;	/* Actual rows in string format */
+	char	*plan_rows_str;		/* Planned rows in string format */
+	int		len;				/* Length of rows in string format */
+	double	actual_rows;		/* Actual rows */
+	double	plan_rows;			/* Planned rows */
+
+	rows = (char *) (strstr(node_text, "\"Actual Rows\": ") /* pointer to "Actual Rows" */
+		   + strlen("\"Actual Rows\": ") * sizeof(char)); /* shift by number of actual rows */
+	len = strstr(rows, "\n") - rows;
+	if ((strstr(rows, ",") - rows) < len)
+	len = strstr(rows, ",") - rows;
+	actual_rows_str = palloc(sizeof(char) * (len + 1));
+	actual_rows_str[len] = 0;
+	strncpy(actual_rows_str, rows, len);
+	actual_rows = strtod(actual_rows_str, NULL);
+	pfree(actual_rows_str);
+
+	rows = strstr(node_text, "\"Plan Rows\": ");
+	rows = (char *) (rows + strlen("\"Plan Rows\": ") * sizeof(char));
+	len = strstr(rows, ",") - rows;
+	plan_rows_str = palloc(sizeof(char) * (len + 1));
+	plan_rows_str[len] = 0;
+	strncpy(plan_rows_str, rows, len);
+	plan_rows = strtod(plan_rows_str, NULL);
+	pfree(plan_rows_str);
+
+	if (plan_rows > actual_rows)
+		return actual_rows / plan_rows;
+	else
+		return 1;
+}
+
+/*
+ *  Count progress of query execution like ratio of
  *  number of received to planned rows in persent.
  *  Changes of this function can lead to more plausible results.
  */
@@ -1259,68 +1300,51 @@ CountProgress(char *plan_text)
 	char	*plan;				/* Copy of plan_text */
 	char	*node;				/* Part of plan with information about single node */
 	char	*rows;				/* Pointer to rows */
-	char	*actual_rows_str;	/* Actual rows in string format */
-	char	*plan_rows_str;		/* Planned rows in string format */
-	int		len;				/* Length of rows in string format */
-	double	actual_rows;		/* Actual rows */
-	double	plan_rows;			/* Planned rows */
 	double	progress = 0;		/* Summary progress on nodes */
 	int		node_amount = 0;	/* Amount of plantree nodes using in counting progress */
 
 	plan = palloc(sizeof(char) * (strlen(plan_text) + 1));
 	strcpy(plan, plan_text);
-	node = strtok(plan, "[");	/* Get information about upper node */
+
+	/*
+	 * plan_text contains information about upper node in format:
+	 * 		"Plan": {
+	 * and in different format for other nodes:
+	 * 		"Plans": [
+	 *
+	 * We will iterate over square brackets as over plan nodes.
+	 */
+	node = strtok(plan, "[");	/* Get information about first (but not upper) node */
+
+	/* Iterating over nodes */
 	while (node != NULL)
 	{
-		if (strstr(node, "Seq Scan") == NULL)
+		/* Result and Modify Table nodes must be skipped */
+		if ((strstr(node, "Result") == NULL) && (strstr(node, "ModifyTable") == NULL))
 		{
-			if (strstr(node, "ModifyTable") == NULL)
+			/* Filter node */
+			if ((rows = strstr(node, "Rows Removed by Filter")) != NULL)
 			{
-				if (strstr(node, "Result") == NULL)
-				{
-					if ((rows = strstr(node, "Rows Removed by Filter")) != NULL)
-					{
-						node_amount++;
-						rows = (char *) (rows + strlen("Rows Removed by Filter\": ") * sizeof(char));
+				node_amount++;
+				rows = (char *) (rows + strlen("Rows Removed by Filter\": ") * sizeof(char));
 
-						/*
-						 * Filter node have 2 conditions:
-						 * 1)  Was not filtered (current progress = 0)
-						 * 2)  Was filtered (current progress = 1)
-						 */
-						if (rows[0] != '0')
-							progress += 1;
-					}
-					else if ((rows = strstr(node, "\"Actual Rows\": ")) != NULL)
-					{
-						node_amount++;
-						rows = (char *) (rows + strlen("\"Actual Rows\": ") * sizeof(char));
-						len = strstr(rows, "\n") - rows;
-						if ((strstr(rows, ",") - rows) < len)
-							len = strstr(rows, ",") - rows;
-						actual_rows_str = palloc(sizeof(char) * (len + 1));
-						actual_rows_str[len] = 0;
-						strncpy(actual_rows_str, rows, len);
-						actual_rows = strtod(actual_rows_str, NULL);
-						pfree(actual_rows_str);
-
-						rows = strstr(node, "\"Plan Rows\": ");
-						rows = (char *) (rows + strlen("\"Plan Rows\": ") * sizeof(char));
-						len = strstr(rows, ",") - rows;
-						plan_rows_str = palloc(sizeof(char) * (len + 1));
-						plan_rows_str[len] = 0;
-						strncpy(plan_rows_str, rows, len);
-						plan_rows = strtod(plan_rows_str, NULL);
-						pfree(plan_rows_str);
-
-						if (plan_rows > actual_rows)
-							progress += actual_rows / plan_rows;
-						else
-							progress += 1;
-					}
-				}
+				/*
+				* Filter node have 2 conditions:
+				* 1)  Was not filtered (current progress = 0)
+				* 2)  Was filtered (current progress = 1)
+				*/
+				if (rows[0] != '0')
+					progress += 1;
+			}
+			/* Not Filter node */
+			else if (strstr(node, "\"Actual Rows\": ") != NULL)
+			{
+				node_amount++;
+				progress += CountNodeProgress(node);
 			}
 		}
+
+		/* Get next node */
 		node = strtok(NULL, "[");
 	}
 
