@@ -1266,8 +1266,8 @@ CountNodeProgress(char *node_text)
 	rows = (char *) (strstr(node_text, "\"Actual Rows\": ") /* pointer to "Actual Rows" */
 		   + strlen("\"Actual Rows\": ") * sizeof(char)); /* shift by number of actual rows */
 	len = strstr(rows, "\n") - rows;
-	if ((strstr(rows, ",") - rows) < len)
-	len = strstr(rows, ",") - rows;
+	if (strstr(rows, ",") != NULL && (strstr(rows, ",") - rows) < len)
+		len = strstr(rows, ",") - rows;
 	actual_rows_str = palloc(sizeof(char) * (len + 1));
 	actual_rows_str[len] = 0;
 	strncpy(actual_rows_str, rows, len);
