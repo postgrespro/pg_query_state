@@ -20,12 +20,11 @@ pg_query_state = shared_module('pg_query_state',
 )
 contrib_targets += pg_query_state
 
-extversion = '1.1'
-output_name = 'pg_query_state--' + extversion + '.sql'
+extversion = '1.2'
 
 configure_file(
   input: 'init.sql',
-  output: output_name,
+  output: 'pg_query_state--' + extversion + '.sql',
   copy: true,
   install: true,
   install_dir: contrib_data_args['install_dir'],
@@ -34,6 +33,7 @@ configure_file(
 install_data(
   'pg_query_state.control',
   'pg_query_state--1.0--1.1.sql',
+  'pg_query_state--1.1--1.2.sql',
   kwargs: contrib_data_args,
 )
 
@@ -49,5 +49,11 @@ tests += {
       '--temp-config', files('test.conf'),
       '--load-extension=pg_query_state',
     ],
+  },
+  'tap': {
+    'tests': [
+      't/001_bad_progress_bar.pl',
+    ],
+    'test_kwargs': {'timeout': 3000},
   },
 }
