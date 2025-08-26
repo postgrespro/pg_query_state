@@ -97,7 +97,7 @@ SKIP: {
         skip "DBI and DBD::Pg are not available", 2 if ($dbdpg_rc != 1);
 
         DBD::Pg->import(':async');
-        $dbh_status = DBI->connect('DBI:Pg:' . $node->connstr($_));
+        $dbh_status = DBI->connect('DBI:Pg:' . $node->connstr('postgres'));
         if ( !defined $dbh_status )
         {
                 die "Cannot connect to database for dbh with pg_progress_bar\n";
