@@ -407,14 +407,14 @@ postgres=# SELECT pid FROM pg_stat_activity where query like 'delete%';
 (1 row)
 
 postgres=# SELECT pg_progress_bar(23877);
-INFO:  Counting Progress doesn't available
+INFO:  could not get query execution progress
  pg_progress_bar
 -----------------
               -1
 (1 row)
 
 postgres=# SELECT pg_progress_bar_visual(23877, 5);
-INFO:  Counting Progress doesn't available
+INFO:  could not get query execution progress
  pg_progress_bar_visual
 ------------------------
                       -1

@@ -1484,7 +1484,7 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 		progress = GetCurrentNumericState(msg);
 		if (progress < 0)
 		{
-			elog(INFO, "Counting Progress doesn't available");
+			elog(INFO, "could not get query execution progress");
 			PG_RETURN_FLOAT8((float8) -1);
 		}
 		else
@@ -1502,7 +1502,7 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 			}
 			else if (progress < 0)
 			{
-				elog(INFO, "Counting Progress doesn't available");
+				elog(INFO, "could not get query execution progress");
 				break;
 			}
 
