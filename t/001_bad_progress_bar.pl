@@ -68,7 +68,7 @@ $ENV{LC_ALL} = 'C';
 $ENV{PGCLIENTENCODING} = 'LATIN1';
 
 my $dbname1 = 'regression_bad_progress_bar';
-(my $username1 = $dbname1) =~ s/^regression/regress_/;
+my $username1 = $dbname1;
 my $src_bootstrap_super = 'regress_postgres';
 
 $node->init(
@@ -90,7 +90,7 @@ $node->run_log(
 
 $node->start;
 
-# cteate test user and test database
+# create test user and test database
 $node->run_log(
 	[ 'createdb', '--username' => $src_bootstrap_super, $dbname1 ]);
 $node->run_log(
@@ -104,8 +104,9 @@ $node->run_log(
 $node->append_conf('postgresql.conf', "shared_preload_libraries = 'pg_query_state'");
 $node->restart;
 
-# we need to make sure that all actions in psql are performed
-# under the created test user and on the test database
+# now we are ready to create extension pg_query_state
+# we perform this and following actions under the
+# created test user and on the test database
 $node->psql($dbname1, 'CREATE EXTENSION pg_query_state;',
 			extra_params => ['-U', $username1]);
 # -----------------------------------------------------------
