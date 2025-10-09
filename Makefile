@@ -13,6 +13,7 @@ PGFILEDESC = "pg_query_state - facility to track progress of plan execution"
 EXTRA_CLEAN = ./isolation_output $(EXTENSION)--$(EXTVERSION).sql \
 	Dockerfile ./tests/*.pyc ./tmp_stress
 
+ISOLATION = corner_cases
 ISOLATION_OPTS = --load-extension=pg_query_state
 
 TAP_TESTS = 1
