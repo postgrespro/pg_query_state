@@ -67,16 +67,7 @@ List					*QueryDescStack = NIL;
 static ProcSignalReason UserIdPollReason = INVALID_PROCSIGNAL;
 static ProcSignalReason QueryStatePollReason = INVALID_PROCSIGNAL;
 static ProcSignalReason WorkerPollReason = INVALID_PROCSIGNAL;
-static bool			module_initialized = false;
-static const char		*be_state_str[] = {						/* BackendState -> string repr */
-							"undefined",						/* STATE_UNDEFINED */
-							"idle",								/* STATE_IDLE */
-							"active",							/* STATE_RUNNING */
-							"idle in transaction",				/* STATE_IDLEINTRANSACTION */
-							"fastpath function call",			/* STATE_FASTPATH */
-							"idle in transaction (aborted)",	/* STATE_IDLEINTRANSACTION_ABORTED */
-							"disabled",							/* STATE_DISABLED */
-						};
+static bool				module_initialized = false;
 static int              reqid = 0;
 
 typedef struct
@@ -353,6 +344,37 @@ qs_ExecutorFinish(QueryDesc *queryDesc)
 }
 
 /*
+ *	Convert BackendState to string description
+ */
+static const char *
+be_state_str(BackendState be_state)
+{
+	switch (be_state)
+	{
+		case STATE_UNDEFINED:
+			return "undefined";
+#if PG_VERSION_NUM >= 180000
+		case STATE_STARTING:
+			return "starting";
+#endif
+		case STATE_IDLE:
+			return "idle";
+		case STATE_RUNNING:
+			return "active";
+		case STATE_IDLEINTRANSACTION:
+			return "idle in transaction";
+		case STATE_FASTPATH:
+			return "fastpath function call";
+		case STATE_IDLEINTRANSACTION_ABORTED:
+			return "idle in transaction (aborted)";
+		case STATE_DISABLED:
+			return "disabled";
+		default:
+			return "unknown";
+	}
+}
+
+/*
  * Find PgBackendStatus entry
  */
 static PgBackendStatus *
@@ -598,7 +620,7 @@ pg_query_state(PG_FUNCTION_ARGS)
 
 					if (be_status)
 						elog(INFO, "state of backend is %s",
-								be_state_str[be_status->st_state - STATE_UNDEFINED]);
+								be_state_str(be_status->st_state));
 					else
 						elog(INFO, "backend is not running query");
 

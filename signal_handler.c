@@ -12,6 +12,7 @@
 
 #include "commands/explain.h"
 #if PG_VERSION_NUM >= 180000
+#include "commands/explain_state.h"
 #include "commands/explain_format.h"
 #endif
 #include "miscadmin.h"
