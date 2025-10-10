@@ -2,7 +2,7 @@
  * pg_query_state.h
  *		Headers for pg_query_state extension.
  *
- * Copyright (c) 2016-2024, Postgres Professional
+ * Copyright (c) 2016-2025, Postgres Professional
  *
  * IDENTIFICATION
  *	  contrib/pg_query_state/pg_query_state.h
