@@ -11,6 +11,9 @@
 #include "pg_query_state.h"
 
 #include "commands/explain.h"
+#if PG_VERSION_NUM >= 180000
+#include "commands/explain_format.h"
+#endif
 #include "miscadmin.h"
 #if PG_VERSION_NUM >= 100000
 #include "pgstat.h"
