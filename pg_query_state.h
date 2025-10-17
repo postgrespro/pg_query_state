@@ -12,7 +12,11 @@
 
 #include <postgres.h>
 
+#if PG_VERSION_NUM >= 180000
+#include "commands/explain_state.h"
+#else
 #include "commands/explain.h"
+#endif
 #include "nodes/pg_list.h"
 #include "storage/procarray.h"
 #include "storage/shm_mq.h"
