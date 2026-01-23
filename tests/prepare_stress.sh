@@ -4,7 +4,7 @@ mkdir -p tmp_stress
 cd tmp_stress
 rm -rf ./*
 
-git clone --depth 1 --single-branch --branch master https://github.com/gregrahn/tpcds-kit.git # used for data and schema
+git clone --depth 1 --single-branch --branch master https://github.com/postgrespro/tpcds-kit.git # used for data and schema
 git clone --depth 1 --single-branch --branch master https://github.com/cwida/tpcds-result-reproduction.git # used for queries only
 
 cd tpcds-kit/tools
