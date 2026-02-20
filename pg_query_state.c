@@ -132,6 +132,7 @@ pg_qs_shmem_startup(void)
 	void	*shmem;
 	int		num_toc = 0;
 
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	shmem = ShmemInitStruct("pg_query_state", shmem_size, &found);
 	if (!found)
 	{
@@ -162,6 +163,7 @@ pg_qs_shmem_startup(void)
 		mq = shm_toc_lookup(toc, num_toc++, false);
 #endif
 	}
+	LWLockRelease(AddinShmemInitLock);
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
@@ -1434,6 +1436,7 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 	List			*msgs;
 	double			progress;
 	double			old_progress;
+	LOCKTAG			tag;
 
 	if (PG_NARGS() == 2)
 	{
@@ -1467,6 +1470,7 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("backend with pid=%d not found", pid)));
 
+	LockShmem(&tag, PG_QS_RCV_KEY);
 	counterpart_user_id = GetRemoteBackendUserId(proc);
 	if (!(superuser() || GetUserId() == counterpart_user_id))
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1493,16 +1497,19 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 	{
 		case QUERY_NOT_RUNNING:
 			elog(INFO, "query not runing");
+			UnlockShmem(&tag);
 			PG_RETURN_FLOAT8((float8) -1);
 			break;
 		case STAT_DISABLED:
 			elog(INFO, "query execution statistics disabled");
+			UnlockShmem(&tag);
 			PG_RETURN_FLOAT8((float8) -1);
 		default:
 			break;
 	}
 	if (msg->result_code == QS_RETURNED && delay == 0)
 	{
+		UnlockShmem(&tag);
 		progress = GetCurrentNumericState(msg);
 		if (progress < 0)
 		{
@@ -1545,7 +1552,9 @@ pg_progress_bar(PG_FUNCTION_ARGS)
 		}
 		if (progress > -1)
 			elog(INFO, "\rProgress = 1.000000");
+		UnlockShmem(&tag);
 		PG_RETURN_FLOAT8((float8) 1);
 	}
+	UnlockShmem(&tag);
 	PG_RETURN_FLOAT8((float8) -1);
 }
