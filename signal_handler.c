@@ -32,17 +32,6 @@ typedef struct
 } stack_frame;
 
 /*
- * An self-explanarory enum describing the send_msg_by_parts results
- */
-typedef enum
-{
-	MSG_BY_PARTS_SUCCEEDED,
-	MSG_BY_PARTS_FAILED
-} msg_by_parts_result;
-
-static msg_by_parts_result send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data);
-
-/*
  *	Get List of stack_frames as a stack of function calls starting from outermost call.
  *		Each entry contains query text and query state in form of EXPLAIN ANALYZE output.
  *	Assume extension is enabled and QueryDescStack is not empty
@@ -197,7 +186,7 @@ shm_mq_send_nonblocking(shm_mq_handle *mqh, Size nbytes, const void *data, Size 
  * send_msg_by_parts sends data through the queue as a bunch of messages
  * of smaller size
  */
-static msg_by_parts_result
+msg_by_parts_result
 send_msg_by_parts(shm_mq_handle *mqh, Size nbytes, const void *data)
 {
 	int bytes_left;
@@ -229,55 +218,22 @@ void
 SendQueryState(void)
 {
 	shm_mq_handle  *mqh;
-	instr_time		start_time;
-	instr_time		cur_time;
-	int64 			delay = MAX_SND_TIMEOUT;
-	int         	reqid = params->reqid;
 	LOCKTAG			tag;
-
-	INSTR_TIME_SET_CURRENT(start_time);
-
-	/* wait until caller sets this process as sender to message queue */
-	for (;;)
-	{
-		if (shm_mq_get_sender(mq) == MyProc)
-			break;
-
-#if PG_VERSION_NUM < 100000
-		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay);
-#elif PG_VERSION_NUM < 120000
-		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT, delay, PG_WAIT_IPC);
-#else
-		WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT, delay, PG_WAIT_IPC);
-#endif
-		INSTR_TIME_SET_CURRENT(cur_time);
-		INSTR_TIME_SUBTRACT(cur_time, start_time);
-
-		delay = MAX_SND_TIMEOUT - (int64) INSTR_TIME_GET_MILLISEC(cur_time);
-		if (delay <= 0)
-		{
-			elog(WARNING, "pg_query_state: failed to receive request from leader");
-			DetachPeer();
-			return;
-		}
-		CHECK_FOR_INTERRUPTS();
-		ResetLatch(MyLatch);
-	}
 
 	LockShmem(&tag, PG_QS_SND_KEY);
 
 	elog(DEBUG1, "Worker %d receives pg_query_state request from %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
 	mqh = shm_mq_attach(mq, NULL, NULL);
 
-	if (reqid != params->reqid || shm_mq_get_sender(mq) != MyProc)
+	if (shm_mq_get_sender(mq) != MyProc || params->reason != QueryStatePollReason)
 	{
-		UnlockShmem(&tag);
-		return;
+		elog(WARNING, "could not send message queue to shared-memory queue: receiver has been interrupted and new request is being processed now.");
+		goto connection_cleanup;
 	}
 	/* check if module is enabled */
 	if (!pg_qs_enable)
 	{
-		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
+		shm_mq_msg msg = { *mq_req_id, BASE_SIZEOF_SHM_MQ_MSG, MyProc, STAT_DISABLED };
 
 		if(send_msg_by_parts(mqh, msg.length, &msg) != MSG_BY_PARTS_SUCCEEDED)
 			goto connection_cleanup;
@@ -286,7 +242,7 @@ SendQueryState(void)
 	/* check if backend doesn't execute any query */
 	else if (list_length(QueryDescStack) == 0)
 	{
-		shm_mq_msg msg = { reqid, BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
+		shm_mq_msg msg = { *mq_req_id, BASE_SIZEOF_SHM_MQ_MSG, MyProc, QUERY_NOT_RUNNING };
 
 		if(send_msg_by_parts(mqh, msg.length, &msg) != MSG_BY_PARTS_SUCCEEDED)
 			goto connection_cleanup;
@@ -299,7 +255,7 @@ SendQueryState(void)
 		int				msglen = sizeof(shm_mq_msg) + serialized_stack_length(qs_stack);
 		shm_mq_msg		*msg = palloc(msglen);
 
-		msg->reqid = reqid;
+		msg->reqid = *mq_req_id;
 		msg->length = msglen;
 		msg->proc = MyProc;
 		msg->result_code = QS_RETURNED;
@@ -313,17 +269,18 @@ SendQueryState(void)
 		msg->stack_depth = list_length(qs_stack);
 		serialize_stack(msg->stack, qs_stack);
 
+		list_free_deep(qs_stack);
+
 		if(send_msg_by_parts(mqh, msglen, msg) != MSG_BY_PARTS_SUCCEEDED)
 		{
 			elog(WARNING, "pg_query_state: peer seems to have detached");
+			pfree(msg);
 			goto connection_cleanup;
 		}
+		else
+			pfree(msg);
 	}
 	elog(DEBUG1, "Worker %d sends response for pg_query_state to %d", shm_mq_get_sender(mq)->pid, shm_mq_get_receiver(mq)->pid);
-	DetachPeer();
-	UnlockShmem(&tag);
-
-	return;
 
 connection_cleanup:
 #if PG_VERSION_NUM < 100000
@@ -331,6 +288,30 @@ connection_cleanup:
 #else
 	shm_mq_detach(mqh);
 #endif
-	DetachPeer();
+	UnlockShmem(&tag);
+}
+
+void
+SendCurrentUserId(void)
+{
+	shm_mq_handle *mqh;
+	shm_mq_userid_msg msg;
+	LOCKTAG			tag;
+
+	msg.userid = GetUserId();
+	LockShmem(&tag, PG_QS_SND_KEY);
+
+	mqh = shm_mq_attach(mq, NULL, NULL);
+	msg.reqid = *mq_req_id;
+	if (shm_mq_get_sender(mq) != MyProc || params->reason != UserIdPollReason)
+		elog(WARNING, "could not send message queue to shared-memory queue: receiver has been interrupted and new request is being processed now.");
+	else if (send_msg_by_parts(mqh, sizeof(msg), &msg) != MSG_BY_PARTS_SUCCEEDED)
+		elog(WARNING, "could not send message queue to shared-memory queue.");
+
+#if PG_VERSION_NUM < 100000
+	shm_mq_detach(mq);
+#else
+	shm_mq_detach(mqh);
+#endif
 	UnlockShmem(&tag);
 }
