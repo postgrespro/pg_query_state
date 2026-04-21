@@ -425,6 +425,7 @@ void
 LockShmem(LOCKTAG *tag, uint32 key)
 {
 	LockAcquireResult result;
+	memset(tag, 0, sizeof(LOCKTAG));
 	tag->locktag_field1 = PG_QS_MODULE_KEY;
 	tag->locktag_field2 = key;
 	tag->locktag_field3 = 0;
