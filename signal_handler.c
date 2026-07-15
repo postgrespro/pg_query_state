@@ -23,6 +23,7 @@
 #include "utils/memutils.h"
 #if PG_VERSION_NUM >= 190000
 #include "varatt.h"
+#include "storage/proc.h"
 #endif
 
 /*

@@ -15,12 +15,19 @@
 #include "funcapi.h"
 #include "executor/execParallel.h"
 #include "executor/executor.h"
+#if PG_VERSION_NUM >= 190000
+#include "executor/instrument.h"
+#endif
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/print.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
+#if PG_VERSION_NUM >= 190000
+#include "storage/lock.h"
+#include "storage/proc.h"
+#endif
 #include "storage/s_lock.h"
 #include "storage/spin.h"
 #include "storage/procarray.h"

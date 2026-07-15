@@ -19,6 +19,9 @@
 #endif
 #include "nodes/pg_list.h"
 #include "storage/procarray.h"
+#if PG_VERSION_NUM >= 190000
+#include "storage/procsignal.h"
+#endif
 #include "storage/shm_mq.h"
 
 #define	QUEUE_SIZE			(16 * 1024)
