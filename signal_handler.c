@@ -40,7 +40,7 @@ typedef struct
  *	Assume extension is enabled and QueryDescStack is not empty
  */
 static List *
-runtime_explain()
+runtime_explain(void)
 {
 	ExplainState    *es;
 	ListCell	    *i;

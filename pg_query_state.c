@@ -107,7 +107,7 @@ uint32			   *mq_req_id = NULL;
  * Estimate amount of shared memory needed.
  */
 static Size
-pg_qs_shmem_size()
+pg_qs_shmem_size(void)
 {
 	shm_toc_estimator	e;
 	Size				size;
