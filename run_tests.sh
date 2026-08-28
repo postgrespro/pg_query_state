@@ -95,7 +95,7 @@ if [ "$LEVEL" = "scan-build" ] || \
    [ "$LEVEL" = "nightmare" ]; then
 
 	# perform static analyzis
-	scan-build --status-bugs make USE_PGXS=1 || status=$?
+	scan-build --status-bugs make USE_PGXS=1 CLANG=clang || status=$?
 
 	# something's wrong, exit now!
 	if [ $status -ne 0 ]; then exit 1; fi
